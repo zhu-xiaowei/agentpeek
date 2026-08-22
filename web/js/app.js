@@ -453,13 +453,13 @@ function updateAgentThreadsMainButton() {
   if (!mainButton) return;
   var isMain = state.activeThreadId === state.rootSessionId;
   mainButton.dataset.sessionId = state.rootSessionId || '';
-  mainButton.textContent = 'Main Agent';
+  mainButton.textContent = 'Main Session';
   mainButton.setAttribute('aria-current', isMain ? 'true' : 'false');
   mainButton.setAttribute(
     'aria-label',
-    isMain ? 'Close agent list; currently viewing main agent' : 'Return to main agent',
+    isMain ? 'Close agent list; currently viewing main session' : 'Return to main session',
   );
-  mainButton.title = isMain ? 'Close agent list' : 'Return to main agent';
+  mainButton.title = isMain ? 'Close agent list' : 'Return to main session';
 }
 
 function renderAgentThreadsModal() {
@@ -586,7 +586,9 @@ async function openAgentThreadsModal() {
   var rootSessionId = state.rootSessionId;
   updateAgentThreadsMainButton();
   modal.style.display = 'flex';
-  requestAnimationFrame(function () { modal.classList.add('open'); });
+  modal.classList.remove('open');
+  void modal.offsetWidth;
+  modal.classList.add('open');
   if (state.sessionThreads.length > 1) renderAgentThreadsModal();
   else renderAgentThreadsSkeleton();
   try {
@@ -608,9 +610,25 @@ function closeAgentThreadsModal() {
   var modal = document.getElementById('agentThreadsModal');
   if (!modal) return;
   modal.classList.remove('open');
-  setTimeout(function () {
+  var box = modal.querySelector('.agent-threads-box');
+  var reduceMotion = window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!box || reduceMotion) {
+    modal.style.display = 'none';
+    return;
+  }
+  var settled = false;
+  var fallbackTimer = 0;
+  function finishClose(event) {
+    if (settled) return;
+    if (event && (event.target !== box || event.propertyName !== 'transform')) return;
+    settled = true;
+    clearTimeout(fallbackTimer);
+    box.removeEventListener('transitionend', finishClose);
     if (!modal.classList.contains('open')) modal.style.display = 'none';
-  }, 160);
+  }
+  box.addEventListener('transitionend', finishClose);
+  fallbackTimer = setTimeout(finishClose, 320);
 }
 
 function switchAgentThread(sessionId) {
@@ -1185,8 +1203,8 @@ function sessionsHtml(device, projectHash, data, sel) {
   return '<div class="list' + (sel ? ' select-mode' : '') + '">'
     + data.sessions.map(function (s) {
     var sessionHref = '#/' + encodeURIComponent(device) + '/' + encodeURIComponent(projectHash) + '/' + s.sessionId;
-    var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
     var agentCount = Math.max(0, Number(s.agentCount) || 0);
+    var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
     var childAgentsBadge = agentCount
       ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>'
       : '';
@@ -1211,7 +1229,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     return '<a class="item session-item" data-id="' + esc(s.sessionId) + '" href="' + sessionHref + '" data-sid="' + esc(s.sessionId) + '" data-preview="' + esc(s.preview || '') + '" data-runtime="' + runtime + '" data-isagent="' + (s.isAgent ? 'true' : '') + '" onclick="' + onclick + '">'
       + (sel ? selectBox(s.sessionId) : '')
       + '<div class="item-main"><div class="item-top"><span class="title">' + esc(title) + '</span>'
-      + '<span class="session-badges">' + runtimeIcon(s.sessionId, runtime) + agentBadge + childAgentsBadge + statusBadge + '</span></div>'
+      + '<span class="session-badges">' + agentBadge + childAgentsBadge + statusBadge + runtimeIcon(s.sessionId, runtime) + '</span></div>'
       + '<div class="item-bottom session-item-bottom"><span class="session-secondary-slot">' + secondary + '</span>'
       + '<span class="item-time">' + timeAgo(s.lastActive) + '</span></div></div>'
       + '</a>';

@@ -26,6 +26,9 @@ test('inline home cards preserve quoted session previews for detail navigation',
       projectHash: '-workspace-baton',
       projectName: 'baton',
       runtime: 'codex',
+      isAgent: true,
+      agentName: 'Review agent',
+      agentCount: 3,
       lastActive: '2026-08-12T00:00:00.000Z',
     }],
     recentSessions: [],
@@ -66,6 +69,21 @@ test('inline home cards preserve quoted session previews for detail navigation',
       'MacBook-Pro',
     );
     assert.equal(dom.window.document.querySelector('.card-device').textContent, 'Office Mac');
+    assert.deepEqual(
+      Array.from(dom.window.document.querySelector('.card-badges').children, function (element) {
+        if (element.classList.contains('agent')) return 'agent';
+        if (element.classList.contains('running')) return 'status';
+        if (element.classList.contains('runtime-mark')) return 'runtime';
+        return 'unknown';
+      }),
+      ['agent', 'status', 'runtime'],
+    );
+    assert.deepEqual(
+      Array.from(dom.window.document.querySelectorAll('.card-badges .badge.agent'), function (element) {
+        return element.textContent;
+      }),
+      ['3 agents'],
+    );
   } finally {
     dom.window.close();
   }

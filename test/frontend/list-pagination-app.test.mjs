@@ -26,6 +26,7 @@ function session(id) {
     status: 'completed',
     activeStatus: id === TWO_PAGES ? 'running' : 'completed',
     agentCount: id === TWO_PAGES ? 3 : 0,
+    isAgent: id === TWO_PAGES,
   };
   if (id === TWO_PAGES - 1) {
     item.activeStatus = 'needs_input';
@@ -209,6 +210,21 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     assert.equal(
       content.querySelector(`[data-id="s${TWO_PAGES}"] .badge.running`).textContent,
       'Running',
+    );
+    assert.deepEqual(
+      Array.from(content.querySelector(`[data-id="s${TWO_PAGES}"] .session-badges`).children, function (element) {
+        if (element.classList.contains('agent')) return 'agent';
+        if (element.classList.contains('running')) return 'status';
+        if (element.classList.contains('runtime-mark')) return 'runtime';
+        return 'unknown';
+      }),
+      ['agent', 'status', 'runtime'],
+    );
+    assert.deepEqual(
+      Array.from(content.querySelectorAll(`[data-id="s${TWO_PAGES}"] .badge.agent`), function (element) {
+        return element.textContent;
+      }),
+      ['3 agents'],
     );
     assert.equal(
       content.querySelector(`[data-id="s${TWO_PAGES - 1}"] .badge.idle`).textContent,

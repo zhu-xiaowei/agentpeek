@@ -240,8 +240,8 @@
       html += '<div class="section-title' + (activeCollapsible ? ' collapsible' + (activeCollapsed ? '' : ' expanded') : '') + '"' + (activeCollapsible ? ' onclick="toggleActiveSessions()"' : '') + '>Active Sessions (' + actives.length + ')' + (activeCollapsible ? ' ' + activeChevron : '') + '</div>';
       html += '<div id="active-section" class="active-grid" style="' + (activeCollapsed ? 'display:none' : '') + '">';
       html += actives.map(function (s) {
-        var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
         var agentCount = Math.max(0, Number(s.agentCount) || 0);
+        var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
         var childAgentsBadge = agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>' : '';
         var displayStatus = s.activeStatus || s.status;
         var statusLabel = displayStatus === 'running' ? 'Running' : displayStatus === 'needs_input' ? 'Needs input' : 'Done';
@@ -257,7 +257,7 @@
           + ' data-pname="' + esc(s.projectName) + '"'
           + ' data-runtime="' + esc(s.runtime || '') + '"'
           + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + runtimeIcon(s) + agentBadge + childAgentsBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span></span></div>'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + childAgentsBadge + '<span class="badge ' + esc(statusClass) + '">' + statusLabel + '</span>' + runtimeIcon(s) + '</span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span>' + (detail ? '<span class="card-detail">' + esc(detail) + '</span>' : '') + '</div>'
           + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
@@ -273,8 +273,8 @@
       html += '<div class="active-grid" id="recent-agents-grid" style="' + (raCollapsed ? 'display:none' : '') + '">';
       html += recentSessions.map(function (s) {
         var title = s.isAgent && s.agentName ? s.agentName : (s.preview || 'No preview');
-        var agentBadge = s.isAgent ? '<span class="badge agent">Agent</span>' : '';
         var agentCount = Math.max(0, Number(s.agentCount) || 0);
+        var agentBadge = s.isAgent && !agentCount ? '<span class="badge agent">Agent</span>' : '';
         var childAgentsBadge = agentCount ? '<span class="badge agent">' + agentCount + ' agent' + (agentCount === 1 ? '' : 's') + '</span>' : '';
         return '<div class="active-card stopped" data-nav="active"'
           + ' data-sid="' + esc(s.sessionId) + '"'
@@ -284,7 +284,7 @@
           + ' data-pname="' + esc(s.projectName) + '"'
           + ' data-runtime="' + esc(s.runtime || '') + '"'
           + ' data-isagent="' + (s.isAgent ? 'true' : '') + '">'
-          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + runtimeIcon(s) + agentBadge + childAgentsBadge + '<span class="badge stopped">Done</span></span></div>'
+          + '<div class="card-header"><span class="card-project">' + esc(s.projectName) + '</span><span class="card-badges">' + agentBadge + childAgentsBadge + '<span class="badge stopped">Done</span>' + runtimeIcon(s) + '</span></div>'
           + '<div class="card-title"><span class="card-title-text">' + esc(title) + '</span></div>'
           + '<div class="card-bottom"><span class="card-device">' + esc(displayDeviceName(s.deviceName)) + '</span><span class="card-time">' + timeAgo(s.lastActive) + '</span></div>'
           + '</div>';
@@ -575,8 +575,8 @@
     <div class="agent-threads-header">
       <div class="modal-title">Subagents</div>
       <button id="agentThreadsMain" class="agent-main-thread-btn" type="button"
-        aria-label="Return to main agent" title="Return to main agent"
-        onclick="switchAgentThread(this.dataset.sessionId)">Main Agent</button>
+        aria-label="Return to main session" title="Return to main session"
+        onclick="switchAgentThread(this.dataset.sessionId)">Main Session</button>
     </div>
     <div id="agentThreadsList" class="agent-threads-list"></div>
   </div>
