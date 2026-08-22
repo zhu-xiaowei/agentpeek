@@ -175,6 +175,14 @@ test('desktop and mobile skeleton rows use the final content line boxes', () => 
   );
 });
 
+test('browse lists reserve scrollbar width before and after CSS loads', () => {
+  assert.match(indexHtml, /body\.browse-view #content\{scrollbar-gutter:stable\}/);
+  assert.match(
+    styleSource,
+    /body\.browse-view #content \{ scrollbar-gutter: stable; \}/,
+  );
+});
+
 test('mobile agent sheet stays flush to the viewport without edge borders', () => {
   assert.match(
     styleSource,
@@ -182,7 +190,7 @@ test('mobile agent sheet stays flush to the viewport without edge borders', () =
   );
   assert.match(
     styleSource,
-    /\.agent-threads-box \{[\s\S]*?margin: 0;\s*padding: 18px 16px max\(18px, var\(--sab, env\(safe-area-inset-bottom, 0px\)\)\) 14px;[\s\S]*?border: 0; border-radius: 16px 16px 0 0;/,
+    /\.agent-threads-box \{[\s\S]*?margin: 0;\s*padding: 18px 16px 0 14px;[\s\S]*?border: 0; border-radius: 16px 16px 0 0;/,
   );
   assert.match(
     styleSource,
@@ -190,9 +198,12 @@ test('mobile agent sheet stays flush to the viewport without edge borders', () =
   );
   assert.match(
     styleSource,
-    /\.agent-threads-list \{[\s\S]*?margin-right: calc\(0px - var\(--agent-threads-scrollbar-width\) - var\(--agent-threads-scrollbar-gap\)\);[\s\S]*?padding-right: calc\(var\(--agent-threads-scrollbar-width\) \+ var\(--agent-threads-scrollbar-gap\)\);/,
+    /\.agent-threads-list \{[\s\S]*?margin-right: calc\(0px - var\(--agent-threads-scrollbar-width\) - var\(--agent-threads-scrollbar-gap\)\);[\s\S]*?padding-right: var\(--agent-threads-scrollbar-gap\);[\s\S]*?scrollbar-gutter: stable;/,
   );
-  assert.doesNotMatch(styleSource, /\.agent-threads-list \{[\s\S]*?scrollbar-gutter:/);
+  assert.match(
+    styleSource,
+    /\.agent-threads-list \{\s*padding-bottom: max\(24px, calc\(var\(--sab, env\(safe-area-inset-bottom, 0px\)\) \+ 8px\)\);/,
+  );
   assert.match(
     styleSource,
     /\.agent-thread-row \{[\s\S]*?padding: 9px 10px;/,
@@ -208,6 +219,18 @@ test('subagent sheet names the root thread Main Session', () => {
 });
 
 test('mobile agent sheet uses a full-height bottom-sheet transition', () => {
+  assert.match(
+    styleSource,
+    /\.agent-threads-overlay \{[\s\S]*?opacity: 1; transition: none;[\s\S]*?background: transparent; backdrop-filter: none;/,
+  );
+  assert.match(
+    styleSource,
+    /\.agent-threads-overlay::before \{[\s\S]*?opacity: 0; transition: opacity 220ms ease-out;/,
+  );
+  assert.match(
+    styleSource,
+    /\.agent-threads-overlay\.open::before \{ opacity: 1; \}/,
+  );
   assert.match(
     styleSource,
     /transform: translate3d\(0, 100%, 0\); transform-origin: center bottom;/,
@@ -226,7 +249,7 @@ test('mobile agent sheet uses a full-height bottom-sheet transition', () => {
   );
   assert.match(
     styleSource,
-    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.agent-threads-box \{ transition: none !important; \}/,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.agent-threads-overlay::before,[\s\S]*?\.agent-threads-box \{ transition: none !important; \}/,
   );
   assert.match(
     appSource,

@@ -78,6 +78,7 @@ body {
 /* === Content === */
 /* min-height:0 overrides flex's default min-height:auto so growing content can't push #content taller and shove #input-bar down (input-bar jump). */
 #content { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+body.browse-view #content { scrollbar-gutter: stable; }
 /* Native iOS browse pages keep a 1px scroll range so short lists can rubber-band.
    Session and new-session views never receive the browse-view class. */
 @supports (-webkit-touch-callout: none) {
@@ -538,8 +539,8 @@ body {
   min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column;
   gap: 4px; margin-top: 10px;
   margin-right: calc(0px - var(--agent-threads-scrollbar-width) - var(--agent-threads-scrollbar-gap));
-  padding-right: calc(var(--agent-threads-scrollbar-width) + var(--agent-threads-scrollbar-gap));
-  overflow-y: auto; overscroll-behavior: contain;
+  padding-right: var(--agent-threads-scrollbar-gap);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
 }
 .agent-thread-row {
   position: relative;
@@ -604,12 +605,21 @@ html.native-mobile .agent-thread-dot { right: 6px; bottom: 6px; }
 @media (max-width: 600px) {
   .agent-threads-overlay {
     align-items: flex-end;
-    transition: opacity 220ms ease-out;
+    opacity: 1; transition: none;
+    background: transparent; backdrop-filter: none;
   }
+  .agent-threads-overlay::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: rgba(0, 0, 0, .6);
+    opacity: 0; transition: opacity 220ms ease-out;
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  .agent-threads-overlay.open::before { opacity: 1; }
   .agent-threads-box {
+    position: relative; z-index: 1;
     width: 100%; max-width: none; max-height: 80vh; max-height: min(80dvh, 640px);
     margin: 0;
-    padding: 18px 16px max(18px, var(--sab, env(safe-area-inset-bottom, 0px))) 14px;
+    padding: 18px 16px 0 14px;
     border: 0; border-radius: 16px 16px 0 0;
     box-shadow: 0 -10px 32px rgba(0, 0, 0, .42);
     transform: translate3d(0, 100%, 0); transform-origin: center bottom;
@@ -620,10 +630,14 @@ html.native-mobile .agent-thread-dot { right: 6px; bottom: 6px; }
     transition-duration: 240ms;
     transition-timing-function: cubic-bezier(.32, 0, .67, 0);
   }
+  .agent-threads-list {
+    padding-bottom: max(24px, calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 8px));
+  }
   .agent-threads-overlay.open .agent-threads-box { transform: translate3d(0, 0, 0); }
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-threads-overlay,
+  .agent-threads-overlay::before,
   .agent-threads-box { transition: none !important; }
 }
 .list.select-mode .item { display: flex; align-items: center; gap: 10px; }
