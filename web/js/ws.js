@@ -823,7 +823,6 @@ function drainStrictStreamOperations() {
       state.wsRunning = true;
     } else if (operation.type === 'completeTurn') {
       completedTurn = true;
-      _lastStreamEndAt = Date.now();
       _checkpointResumedTurns.delete(operation.turnId);
       _reconnectingTurns.delete(operation.turnId);
     }
@@ -836,6 +835,7 @@ function drainStrictStreamOperations() {
 }
 
 function handleStrictTurnStart(message) {
+  _strictStatusAuthority = true;
   _streamCoordinator.startTurn(message);
   drainStrictStreamOperations();
   state.wsRunning = true;
@@ -857,6 +857,7 @@ function handleStrictFrame(message, type) {
 }
 
 function handleStrictTurnEnd(message) {
+  _strictStatusAuthority = true;
   var endMessages = Array.isArray(message.messages)
     ? message.messages.slice()
     : [];
@@ -910,14 +911,14 @@ function mergeLateJoinAuthority(completion, completed) {
       });
     }
     if (completed) {
-      _lastStreamEndAt = Date.now();
+      _strictStatusAuthority = true;
       _reconnectingTurns.delete(completion.turnId);
     }
     state.wsRunning = hasOutstandingTurns();
     updateSendBtn();
     return;
   }
-  if (completed) _lastStreamEndAt = Date.now();
+  if (completed) _strictStatusAuthority = true;
   if (completed) _reconnectingTurns.delete(completion.turnId);
   if (state._wsBuffer !== null) {
     state._wsBuffer.push.apply(state._wsBuffer, incoming);
@@ -946,6 +947,7 @@ function handleStrictMessages(envelope) {
   var remaining = [];
   var added = false;
   var identities = [];
+  var terminalTurn = false;
   for (var index = 0; index < envelope.messages.length; index++) {
     var message = envelope.messages[index];
     var identity = strictMessageIdentity(envelope, message, index);
@@ -954,8 +956,10 @@ function handleStrictMessages(envelope) {
       continue;
     }
     Object.assign(message, identity, {
+      _strictLifecycle: true,
       _strictManaged: message.type === 'assistant' || message.type === 'summary',
     });
+    if (isTerminalAssistantMessage(message)) terminalTurn = true;
     removeHistoricalMessageNodes(
       message.uuid || '',
       message.nativeId || '',
@@ -971,6 +975,13 @@ function handleStrictMessages(envelope) {
     _streamCoordinator.ingestAuthoritative({
       ...identity,
       message: message,
+    });
+  }
+  if (terminalTurn) {
+    _strictStatusAuthority = true;
+    _streamCoordinator.endTurn({
+      sessionId: envelope.sessionId,
+      turnId: envelope.turnId,
     });
   }
   drainStrictStreamOperations();
@@ -1023,7 +1034,7 @@ function resetStreamSessionState() {
   _agentThreadRefreshVersion++;
   _appliedLifecycleVersion = 0;
   resetTurnLifecycle();
-  _lastStreamEndAt = 0;
+  _strictStatusAuthority = false;
 }
 
 function selectWsSession(sessionId) {
@@ -1205,8 +1216,17 @@ var _latestTurnOrder = -1;
 var _latestSendFailed = false;
 var _interruptedTurns = {};
 var _lastThinkSecs = 0; // seconds the live preview measured for the latest thinking block
-// Last headless stream_end time; while fresh, trust it over deriveRunning (trailing rows are stop=null).
-var _lastStreamEndAt = 0;
+var _strictStatusAuthority = false;
+var STRICT_TERMINAL_STOP_REASONS = new Set([
+  'end_turn',
+  'max_tokens',
+  'stop_sequence',
+]);
+
+function isTerminalAssistantMessage(message) {
+  return message?.type === 'assistant'
+    && STRICT_TERMINAL_STOP_REASONS.has(message.stopReason);
+}
 
 // One-line preview of a tool's input (best-effort; input may be partial JSON).
 function summarizeToolInput(input) {
@@ -1475,20 +1495,26 @@ function updateLastTurn(explicitMessages) {
     insertAssistantItemAtTimestamp(container, html, msg.timestamp);
   }
   markTurnAdjacency(container); // turns may have been added this batch
-  // Pure metadata frames (ai-title/last-prompt) arrive at a new turn's start before
-  // the first real reply; deriveRunning skips them and scans back to the prior
-  // end_turn → idle, flickering the spinner off. Only let real assistant/user frames
-  // downgrade a running spinner; metadata-only batches keep the current state.
-  var derived = deriveRunning(state.wsAllMessages, null, state.appState.runtime);
-  var hasTurnFrame = newMessages.some(function (m) {
-    return m.type === 'assistant'
-      || (m.type === 'user' && !window.isSubagentNotificationMsg?.(m));
+  var nonStrictMessages = state.wsAllMessages.filter(function (message) {
+    return !message._strictLifecycle;
   });
-  // A fresh stream_end means the turn is over; don't let stop=null trailing rows re-light the spinner.
-  var streamEndFresh = _lastStreamEndAt && (Date.now() - _lastStreamEndAt < 4000);
+  var derived = deriveRunning(nonStrictMessages, null, state.appState.runtime);
+  var nonStrictTurnFrames = newMessages.filter(function (message) {
+    return !message._strictLifecycle
+      && (message.type === 'assistant'
+        || (message.type === 'user'
+          && !window.isSubagentNotificationMsg?.(message)));
+  });
+  var startsExternalTurn = nonStrictTurnFrames.some(function (message) {
+    return message.type === 'user'
+      && !isInterruptMsg(message)
+      && !isToolResultOnly(message);
+  });
+  if (startsExternalTurn) _strictStatusAuthority = false;
   if (hasOutstandingTurns()) state.wsRunning = true;
-  else if (streamEndFresh) state.wsRunning = false;
-  else if (!streamEndFresh && (derived || hasTurnFrame)) state.wsRunning = derived;
+  else if (!_strictStatusAuthority && nonStrictTurnFrames.length) {
+    state.wsRunning = derived;
+  }
   updateSendBtn();
 
   // Don't dismiss a prompt still awaiting the user's answer (prompts are bridge-driven).
@@ -1876,7 +1902,6 @@ var _sendOrder = 0;
 
 function doSend(fullText, displayText, images) {
   state.wsRunning = true;
-  _lastStreamEndAt = 0; // new turn starting — drop any stale stream_end freshness
   var device = state.appState.device || '';
   // Unique per-send id, round-tripped through the bridge in send_message_result
   // so the ack maps back to THIS exact bubble (not "the first pending", which
