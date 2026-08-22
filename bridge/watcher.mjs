@@ -5,7 +5,7 @@ import { post } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { clearLiveMessage } from './live-message-registry.mjs';
-import { getSessionMetadata, readableProjectName, statusFromEntry, resolveStatus, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
+import { getSessionMetadata, readableProjectName, statusFromEntry, getSessionStatus, getRunningInfo, getDaemonSessions, getDaemonRunningSessionIds, findSessionFile, getAgentsJson, normalizeProjectHash } from './session.mjs';
 import { recentSessions, lastKnownStatus, knownProjects, reconcile } from './sync.mjs';
 import {
   headlessRoute,
@@ -229,8 +229,7 @@ async function readAndSend(config, filename, sessionId) {
     const daemonActive = !poolOwned && dm && getDaemonRunningSessionIds().has(sessionId);
     const resolvedStatus = poolOwned ? 'running'
       : daemonActive ? dm.status
-      : lastStatus ? resolveStatus(sessionId, lastStatus)
-      : getSessionStatus(sessionId, filePath, getRunningInfo());
+      : (lastStatus || getSessionStatus(sessionId, filePath, getRunningInfo()));
     const effective = preferPendingInteraction(
       resolvedStatus,
       pendingInteractionDetail(sessionId),
@@ -246,11 +245,6 @@ async function readAndSend(config, filename, sessionId) {
       gotNewTitle,
       effective.detail,
     );
-    // Trailing edge: content settled but debounce held it 'running'. No more
-    // writes will fire fs.watch, so re-evaluate once after debounce expires.
-    if (!poolOwned && !daemonActive && lastStatus && effective.detail === null && lastStatus !== 'running' && effective.status === 'running') {
-      scheduleRecheck(config, filePath, filename, sessionId);
-    }
   }
 }
 
@@ -295,8 +289,7 @@ async function readAndSendSubagent(config, filename, filePath, sessionId) {
     : {};
   const stat = fs.statSync(filePath);
   const status = lastStatus
-    ? resolveStatus(rootSessionId, lastStatus)
-    : (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
+    || (Date.now() - stat.mtimeMs < 15_000 ? 'running' : 'completed');
   lastKnownStatus.set(sessionId, status);
   recentSessions.add(sessionId);
   const sessionMeta = {
@@ -391,31 +384,6 @@ async function postSessionMeta(
     knownProjects.add(projectHash);
     reconcile(config);
   }
-}
-
-const _recheckTimers = new Map(); // sessionId → timeout, reset on new activity
-const RECHECK_DELAY_MS = 11_000;   // just past resolveStatus's 10s running debounce
-
-function scheduleRecheck(config, filePath, filename, sessionId) {
-  clearTimeout(_recheckTimers.get(sessionId));
-  _recheckTimers.set(sessionId, setTimeout(async () => {
-    _recheckTimers.delete(sessionId);
-    if (!fs.existsSync(filePath)) return;
-    const effective = preferPendingInteraction(
-      getSessionStatus(sessionId, filePath, getRunningInfo()),
-      pendingInteractionDetail(sessionId),
-    );
-    await postSessionMeta(
-      config,
-      filePath,
-      filename,
-      sessionId,
-      effective.status,
-      null,
-      false,
-      effective.detail,
-    );
-  }, RECHECK_DELAY_MS));
 }
 
 const _jobsState = new Map(); // sessionId → { agentName, agentDetail, status }

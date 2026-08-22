@@ -142,7 +142,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **external CC** (terminal/VS Code, not pool-owned): `getSessionStatus()`/`statusFromEntry()`
     read jsonl tail `stop_reason` (`tool_use`/null → running; structured
     `AskUserQuestion`/`ExitPlanMode` → `needs_input`; `end_turn`/interrupt/no-process →
-    `completed`). `resolveStatus()` holds `running` across a 10s debounce before downgrading.
+    `completed`) and write the derived state immediately.
   - **daemon agent**: while its worker is present in `roster.json`, `mapAgentState()` maps
     `--json` working/blocked/done → running/needs_input/completed. Inactive historical
     `--all` entries preserve agent identity only; status falls back to process + jsonl.

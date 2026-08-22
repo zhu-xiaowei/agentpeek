@@ -9,6 +9,7 @@ import {
 } from '../../bridge/claude-runtime.mjs';
 import { ClaudePool } from '../../bridge/headless.mjs';
 import {
+  getSessionStatus,
   resolveAgentMetadata,
   statusFromEntry,
 } from '../../bridge/session.mjs';
@@ -156,6 +157,37 @@ test('inactive agent with unfinished jsonl but no process is completed', () => {
       agentDetail: '',
       status: 'completed',
     });
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('fresh end_turn completes immediately after running content', () => {
+  const sessionId = '46464646-4646-4464-8464-464646464646';
+  const fixture = sessionFixture(sessionId, 'running');
+  const runningInfo = {
+    projects: new Set([fixture.project]),
+    sessions: new Set([sessionId]),
+  };
+  try {
+    assert.equal(
+      getSessionStatus(sessionId, fixture.filePath, runningInfo),
+      'running',
+    );
+    fs.appendFileSync(fixture.filePath, `${JSON.stringify({
+      type: 'assistant',
+      uuid: `${sessionId}-assistant`,
+      timestamp: '2026-08-10T00:00:01.000Z',
+      message: {
+        model: 'claude-test',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: 'Done' }],
+      },
+    })}\n`);
+    assert.equal(
+      getSessionStatus(sessionId, fixture.filePath, runningInfo),
+      'completed',
+    );
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -514,7 +546,7 @@ test('idle pooled process no longer owns session status', () => {
   }
 });
 
-test('agent moves from daemon needs_input through web completion back to terminal needs_input', async () => {
+test('agent moves from daemon needs_input through web completion to immediate terminal completion', async () => {
   const sessionId = '99999999-9999-4999-8999-999999999999';
   const fixture = sessionFixture(sessionId);
   const daemon = resolveAgentMetadata(agent(sessionId), {
@@ -522,9 +554,6 @@ test('agent moves from daemon needs_input through web completion back to termina
     agentDetail: 'Daemon question',
   });
   const daemonMeta = new Map([[sessionId, daemon]]);
-  const realNow = Date.now;
-  let now = realNow();
-  Date.now = () => now;
   try {
     assert.equal(daemon.status, 'needs_input');
 
@@ -610,14 +639,12 @@ test('agent moves from daemon needs_input through web completion back to termina
       },
     });
     writeRows(fixture.filePath, terminalRows);
-    now += 11_000;
     assert.equal(resolveAgentMetadata(agent(sessionId), {
       daemonActive: false,
       filePath: fixture.filePath,
       runningInfo,
     }).status, 'completed');
   } finally {
-    Date.now = realNow;
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });

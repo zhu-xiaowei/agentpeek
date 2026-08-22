@@ -228,25 +228,6 @@ export function statusFromEntry(entry) {
   return null; // file-history-snapshot, queue-operation, etc.
 }
 
-// Last time content judged each session 'running' — for the downgrade debounce.
-const lastRunningTs = new Map();
-const RUNNING_DEBOUNCE_MS = 10_000;
-
-// Hold 'running' across end_turn flicker before downgrading to the terminal 'completed'.
-export function resolveStatus(sessionId, contentStatus) {
-  if (contentStatus === 'needs_input') {
-    lastRunningTs.delete(sessionId);
-    return 'needs_input';
-  }
-  if (contentStatus === 'running') {
-    lastRunningTs.set(sessionId, Date.now());
-    return 'running';
-  }
-  const last = lastRunningTs.get(sessionId);
-  if (last && Date.now() - last < RUNNING_DEBOUNCE_MS) return 'running';
-  return 'completed';
-}
-
 /**
  * Read last lines of jsonl and determine content status.
  */
@@ -314,8 +295,7 @@ export function getSessionStatus(sessionId, filePath, runningInfo) {
   try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch { return 'completed'; }
   if (!runningInfo.sessions.has(sessionId) && Date.now() - mtimeMs > 300_000) return 'completed';
 
-  // 4. Debounce before downgrading running→completed.
-  return resolveStatus(sessionId, contentStatus);
+  return contentStatus;
 }
 
 /**

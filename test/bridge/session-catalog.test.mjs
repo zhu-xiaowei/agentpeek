@@ -133,11 +133,19 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
     needsInputAgentCount: 0,
     activeStatus: 'running',
   }]);
+  assert.deepEqual(trackAgentSession({ ...second, status: 'completed' }), [{
+    sessionId: 'codex:0001',
+    project: '-repo',
+    agentCount: 3,
+    runningAgentCount: 0,
+    needsInputAgentCount: 0,
+    activeStatus: 'completed',
+  }]);
   assert.deepEqual(trackAgentSession({ ...grandchild, status: 'needs_input' }), [{
     sessionId: 'codex:0001',
     project: '-repo',
     agentCount: 3,
-    runningAgentCount: 1,
+    runningAgentCount: 0,
     needsInputAgentCount: 1,
     activeStatus: 'needs_input',
   }]);
@@ -145,9 +153,9 @@ test('agent count tracking overwrites exact Set size across duplicates and inter
     sessionId: 'codex:0001',
     project: '-repo',
     agentCount: 1,
-    runningAgentCount: 1,
+    runningAgentCount: 0,
     needsInputAgentCount: 0,
-    activeStatus: 'running',
+    activeStatus: 'completed',
   }]);
   assert.deepEqual(trackAgentSession(guardian), []);
 });
