@@ -550,6 +550,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
       }
       draw() {
         assert.equal(this.element.isConnected, true);
+        assert.equal(this.element.classList.contains('diff-container'), true);
         contentHeight = 900;
         this.element.innerHTML = '<div class="d2h-file-wrapper">rendered diff</div>';
       }
@@ -596,6 +597,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(loads, 1);
     assert.equal(diff.dataset.diffState, 'ready');
+    assert.equal(diff.style.minHeight, '');
     assert.match(diff.textContent, /rendered diff/);
     assert.equal(content.scrollTop, 900);
 
@@ -611,7 +613,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
   }
 });
 
-test('offscreen Edit keeps a measured height when its target initially reports zero', async () => {
+test('offscreen Edit renders without imposing a fixed target height', async () => {
   const originalLoader = window.loadDiffViewer;
   const originalDiff = window.Diff;
   const originalUi = window.Diff2HtmlUI;
@@ -663,7 +665,7 @@ test('offscreen Edit keeps a measured height when its target initially reports z
     await window.afterToolDomMutation(node);
 
     assert.equal(diff.dataset.diffState, 'ready');
-    assert.ok(parseFloat(diff.style.minHeight) > 10);
+    assert.equal(diff.style.minHeight, '');
     assert.match(diff.textContent, /offscreen diff/);
   } finally {
     window.loadDiffViewer = originalLoader;
@@ -729,7 +731,9 @@ test('Edit hydration does not reclaim scroll after the user leaves the bottom', 
     await hydration;
 
     assert.equal(content.scrollTop, 25);
-    assert.match(node.querySelector('.diff-container').textContent, /rendered diff/);
+    const diff = node.querySelector('.diff-container');
+    assert.equal(diff.style.minHeight, '');
+    assert.match(diff.textContent, /rendered diff/);
   } finally {
     window.loadDiffViewer = originalLoader;
     window.Diff = originalDiff;

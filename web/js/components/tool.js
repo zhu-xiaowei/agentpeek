@@ -372,7 +372,7 @@ import { state } from '../state.js';
           spec.file, spec.file, a, b, '', '', { context: 3 },
         );
         staging = document.createElement('div');
-        staging.className = 'diff-render-staging';
+        staging.className = 'diff-container diff-render-staging';
         const targetWidth = Math.ceil(
           element.getBoundingClientRect().width
           || element.closest('.tool-body')?.getBoundingClientRect().width
@@ -444,14 +444,12 @@ import { state } from '../state.js';
           stagedHeight = 24;
         }
         if (stagedHeight <= 10) throw new Error('Diff layout height collapsed');
-        element.style.minHeight = Math.max(24, stagedHeight) + 'px';
         element.replaceChildren(...Array.from(staging.childNodes));
         staging.remove();
         element.dataset.diffState = 'ready';
       } catch (e) {
         element = adoptCurrentDiffInstance(element, host, instance, key);
         if (!element) return;
-        element.style.minHeight = '24px';
         element.innerHTML = fallbackDiff(spec.oldStr, spec.newStr);
         element.dataset.diffState = 'fallback';
       } finally {
