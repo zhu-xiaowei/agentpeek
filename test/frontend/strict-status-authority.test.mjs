@@ -105,10 +105,10 @@ test('strict lifecycle remains authoritative without the stream-end freshness ti
       stopReason: 'end_turn',
     });
 
-    assert.equal(h.state.wsRunning, false);
+    assert.equal(h.state.wsRunning, true);
     assert.equal(
       h.document.querySelector(`[data-turn-id="${fallbackTurnId}"]`)
-        ?.classList.contains('stream-committed'),
+        ?.classList.contains('stream-preview'),
       true,
     );
     var fallbackTurn = h.document.querySelector(

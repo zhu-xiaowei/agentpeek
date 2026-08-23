@@ -51,6 +51,13 @@ export function countJsonlLines(filePath) {
 }
 
 const TRUNC_MARK = '\n…[truncated]';
+const MIDDLE_TRUNC_MARK = '\n…[truncated]…\n';
+const TOOL_INPUT_MAX_CHARS = 2000;
+const TOOL_INPUT_HEAD_CHARS = 1000;
+const TOOL_INPUT_TAIL_CHARS = 1000;
+const TOOL_OUTPUT_MAX_CHARS = 4000;
+const TOOL_OUTPUT_HEAD_CHARS = 1500;
+const TOOL_OUTPUT_TAIL_CHARS = 2500;
 
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps their DDB sk deterministic.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
@@ -70,13 +77,70 @@ function collectStrings(node, out) {
   }
 }
 
+function truncateMiddle(text, maxChars, headChars, tailChars) {
+  if (typeof text !== 'string' || text.length <= maxChars) return text;
+  return text.slice(0, headChars)
+    + MIDDLE_TRUNC_MARK
+    + text.slice(-tailChars);
+}
+
+function truncateNestedStrings(node, maxChars, headChars, tailChars) {
+  if (!node || typeof node !== 'object') return;
+  for (const key of Object.keys(node)) {
+    const value = node[key];
+    if (typeof value === 'string') {
+      node[key] = truncateMiddle(value, maxChars, headChars, tailChars);
+    } else if (value && typeof value === 'object') {
+      truncateNestedStrings(value, maxChars, headChars, tailChars);
+    }
+  }
+}
+
+function truncateToolIo(message) {
+  for (const block of Array.isArray(message?.content) ? message.content : []) {
+    if (block?.type === 'tool_use' && block.input && typeof block.input === 'object') {
+      truncateNestedStrings(
+        block.input,
+        TOOL_INPUT_MAX_CHARS,
+        TOOL_INPUT_HEAD_CHARS,
+        TOOL_INPUT_TAIL_CHARS,
+      );
+    } else if (block?.type === 'tool_result') {
+      if (typeof block.content === 'string') {
+        block.content = truncateMiddle(
+          block.content,
+          TOOL_OUTPUT_MAX_CHARS,
+          TOOL_OUTPUT_HEAD_CHARS,
+          TOOL_OUTPUT_TAIL_CHARS,
+        );
+      } else if (block.content && typeof block.content === 'object') {
+        truncateNestedStrings(
+          block.content,
+          TOOL_OUTPUT_MAX_CHARS,
+          TOOL_OUTPUT_HEAD_CHARS,
+          TOOL_OUTPUT_TAIL_CHARS,
+        );
+      }
+    }
+  }
+  if (message?.toolUseResult && typeof message.toolUseResult === 'object') {
+    truncateNestedStrings(
+      message.toolUseResult,
+      TOOL_OUTPUT_MAX_CHARS,
+      TOOL_OUTPUT_HEAD_CHARS,
+      TOOL_OUTPUT_TAIL_CHARS,
+    );
+  }
+}
+
 // Return a structural clone of `msg` whose JSON byte size is <= maxBytes,
-// preserving as much of each string's prefix as possible. Repeatedly trims the
-// currently-longest string field (keeping its head + a truncation marker) until
-// the whole message fits. Returns the message unchanged if already within limit.
+// prioritizing readable tool IN/OUT previews before trimming the longest
+// remaining strings until the whole message fits.
 export function truncateToBytes(msg, maxBytes) {
   if (Buffer.byteLength(JSON.stringify(msg)) <= maxBytes) return msg;
   const clone = JSON.parse(JSON.stringify(msg));
+  truncateToolIo(clone);
+  if (Buffer.byteLength(JSON.stringify(clone)) <= maxBytes) return clone;
   const fields = [];
   collectStrings(clone, fields);
   // Trim longest-first; loop until it fits or no further reduction is possible.

@@ -1939,3 +1939,70 @@ def test_bridge_messages_echoes_delivery_id_only_to_bridge_ack(monkeypatch):
             "deliveryId": "delivery-1",
         }),
     ]
+
+
+def test_post_to_connection_uses_compact_utf8_json(monkeypatch):
+    sent = []
+
+    class Client:
+        exceptions = SimpleNamespace(GoneException=RuntimeError)
+
+        def post_to_connection(self, ConnectionId, Data):
+            sent.append((ConnectionId, Data))
+
+    monkeypatch.setattr(bridge_ws, "_apigw", Client())
+
+    assert bridge_ws._post_to_connection(
+        "https://example.test/v1",
+        "app-1",
+        {"action": "stream_delta", "chunk": "中文"},
+    ) is True
+    assert sent == [(
+        "app-1",
+        '{"action":"stream_delta","chunk":"中文"}'.encode(),
+    )]
+
+
+def test_compact_messages_placeholder_keeps_turn_sequence(monkeypatch):
+    class SubscriptionTable:
+        def query(self, **_):
+            return {"Items": [{"connectionId": "app-1"}]}
+
+    sent = []
+    monkeypatch.setattr(bridge_ws, "_subscriptions_table", SubscriptionTable())
+    monkeypatch.setattr(
+        bridge_ws,
+        "_post_to_connection",
+        lambda endpoint, connection_id, data: sent.append((connection_id, data)),
+    )
+
+    response = bridge_ws._handle_bridge_messages(
+        {
+            "action": "messages",
+            "sessionId": "codex:test",
+            "turnId": "turn-1",
+            "seq": 12,
+            "messages": [],
+            "truncated": True,
+            "noCache": True,
+        },
+        "bridge-1",
+        "account-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert sent == [
+        ("app-1", {
+            "action": "messages",
+            "sessionId": "codex:test",
+            "turnId": "turn-1",
+            "seq": 12,
+            "messages": [],
+            "truncated": True,
+        }),
+        ("bridge-1", {
+            "action": "messages_ack",
+            "sessionId": "codex:test",
+        }),
+    ]

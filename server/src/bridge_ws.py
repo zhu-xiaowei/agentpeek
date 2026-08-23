@@ -96,7 +96,12 @@ def _post_to_connection(endpoint, connection_id, data):
     """Send data to a WebSocket connection. Returns False if connection is gone."""
     client = _apigw_client(endpoint)
     try:
-        client.post_to_connection(ConnectionId=connection_id, Data=json.dumps(data).encode())
+        payload = json.dumps(
+            data,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode()
+        client.post_to_connection(ConnectionId=connection_id, Data=payload)
         return True
     except client.exceptions.GoneException:
         # Connection no longer exists — clean up
@@ -459,7 +464,13 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     """Bridge pushes new messages — relay to subscribed apps + write DDB."""
     session_id = body.get("sessionId", "")
     messages = body.get("messages", [])
-    if not session_id or not messages:
+    compact_placeholder = (
+        body.get("truncated") is True
+        and bool(body.get("turnId"))
+        and body.get("seq") is not None
+        and messages == []
+    )
+    if not session_id or (not messages and not compact_placeholder):
         return {"statusCode": 400}
 
     # 1. Relay to subscribed apps (priority — low latency).
@@ -488,7 +499,7 @@ def _handle_bridge_messages(body, bridge_connection_id, account_id, endpoint):
     # Skip when the bridge flags noCache: it sent a truncated copy over WS (to fit
     # the 32KB frame cap) and is writing the full copy to DDB itself via HTTP, so
     # caching the truncated version here would clobber it.
-    if not body.get("noCache"):
+    if messages and not body.get("noCache"):
         if not _messages_table:
             return {"statusCode": 500}
         persisted = False

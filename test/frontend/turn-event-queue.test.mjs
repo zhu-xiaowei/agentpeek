@@ -225,6 +225,36 @@ test('a turn that reaches end without seq 0 or 1 completes as late join', () => 
   assert.deepEqual(queue.push(event(0, 'stream_turn_start')), []);
 });
 
+test('a compact stream_end closes a normally started turn across a seq gap', () => {
+  var queue = new TurnEventQueue();
+  assert.deepEqual(
+    queue.push(event(0, 'stream_turn_start')).map((item) => item.seq),
+    [0],
+  );
+  assert.deepEqual(
+    queue.push(event(1, 'stream_block_start')).map((item) => item.seq),
+    [1],
+  );
+  assert.deepEqual(queue.push({
+    ...event(3, 'stream_end'),
+    recoveryRequired: true,
+  }), []);
+  assert.equal(queue.isGappedEndCandidate('turn-1'), true);
+  assert.equal(queue.completeGappedEnd('turn-1'), true);
+  assert.deepEqual(queue.takeLateJoinCompletions(), [{
+    sessionId: 'session-1',
+    turnId: 'turn-1',
+    messages: [],
+    end: {
+      ...event(3, 'stream_end'),
+      recoveryRequired: true,
+    },
+    gapped: true,
+    missingSeq: 2,
+  }]);
+  assert.deepEqual(queue.push(event(2, 'stream_delta')), []);
+});
+
 test('late join skips an incomplete node and resumes at the next block start', () => {
   var queue = new TurnEventQueue();
   queue.push(event(3, 'stream_delta'));

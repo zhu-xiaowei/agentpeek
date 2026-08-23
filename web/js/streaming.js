@@ -164,11 +164,7 @@ export class TurnEventQueue {
       return false;
     }
     for (var event of turn.pending.values()) {
-      if (event.action === 'stream_end'
-        && Array.isArray(event.messages)
-        && event.messages.length) {
-        return true;
-      }
+      if (event.action === 'stream_end') return true;
     }
     return false;
   }

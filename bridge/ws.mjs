@@ -396,6 +396,29 @@ export function initWs(config) {
   connect();
 }
 
+export function fitWsPayload(data, frameLimit = WS_FRAME_LIMIT) {
+  if (Buffer.byteLength(JSON.stringify(data)) <= frameLimit) return data;
+  if (data?.action === 'messages') {
+    return {
+      ...data,
+      messages: [],
+      truncated: true,
+    };
+  }
+  if (data?.action === 'stream_end') {
+    const { messages: _messages, ...compact } = data;
+    return {
+      ...compact,
+      recoveryRequired: true,
+    };
+  }
+  const compact = truncateToBytes(data, frameLimit - 64);
+  return {
+    ...compact,
+    truncated: true,
+  };
+}
+
 export function wsSend(data) {
   assertTurnEventEnvelope(data);
   if (data?.action === 'send_message_result'
@@ -409,7 +432,14 @@ export function wsSend(data) {
   }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return false;
   try {
-    _ws.send(JSON.stringify(data));
+    const outgoing = fitWsPayload(data);
+    assertTurnEventEnvelope(outgoing);
+    const payload = JSON.stringify(outgoing);
+    if (Buffer.byteLength(payload) > WS_FRAME_LIMIT) {
+      console.error(`[ws] oversized ${data.action || 'event'} could not be compacted`);
+      return false;
+    }
+    _ws.send(payload);
     return true;
   } catch {
     return false;
@@ -910,22 +940,13 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     });
     if (!msg) return;
     if (ownsUserPrompt && isPromptUserMessage(msg)) return;
-    let out = msg;
-    if (Buffer.byteLength(JSON.stringify({
-      action: 'messages',
-      ...liveTurn.envelope(),
-      messages: [msg],
-    })) > WS_FRAME_LIMIT) {
-      out = truncateToBytes(msg, WS_FRAME_LIMIT - 1024);
-      out.truncated = true;
-    }
     if (meta.runtime && meta.liveKey) {
       markLiveMessagePushed(meta.runtime, meta.liveKey);
     } else {
       markHeadlessPushed(msg.uuid);
     }
     liveTurn.start();
-    liveTurn.sendAuthoritative(out, { noCache: true });
+    liveTurn.sendAuthoritative(msg, { noCache: true });
   };
   const queueAuthority = (raw, meta = {}) => {
     authorityQueue = authorityQueue

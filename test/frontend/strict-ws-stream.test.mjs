@@ -52,9 +52,9 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
     event(turnId, 9, 'stream_end'),
   ];
 
-  // Authority, stop, and end arrive before the missing deltas. None may cross
-  // the gap; the queue releases the entire turn only in seq order.
-  for (const index of [0, 1, 2, 8, 9, 7, 6, 5, 4, 3]) {
+  // Authority and stop arrive before the missing deltas. Ordinary frames stay
+  // ordered; the terminal event arrives only after the transport gap closes.
+  for (const index of [0, 1, 2, 8, 7, 6, 5, 4, 3, 9]) {
     h.hooks.handleWsMessage(events[index]);
   }
 
@@ -95,7 +95,7 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
 
   for (const item of [
     first[0], second[0], second[2], first[2], second[1],
-    first[1], second[4], first[4], second[3], first[3],
+    first[1], second[3], first[3], second[4], first[4],
   ]) {
     h.hooks.handleWsMessage(item);
   }

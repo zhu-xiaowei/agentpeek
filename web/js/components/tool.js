@@ -628,7 +628,7 @@ import { state } from '../state.js';
       name,
       desc: truncate(JSON.stringify(input), 80),
       body: grid([
-        ['IN', esc(truncate(JSON.stringify(input, null, 2), 1500))],
+        ['IN', esc(JSON.stringify(input, null, 2))],
         out != null ? ['OUT', ansiHtml(out)] : null,
       ]),
     };
@@ -650,7 +650,7 @@ import { state } from '../state.js';
       name: result ? 'Called' : 'Calling',
       desc: invocation ? `${invocation.server}.${invocation.tool}` : '',
       body: grid([
-        ['IN', esc(truncate(JSON.stringify(visibleInput, null, 2), 1500))],
+        ['IN', esc(JSON.stringify(visibleInput, null, 2))],
         out != null ? ['OUT', ansiHtml(out)] : null,
       ]),
     };

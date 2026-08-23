@@ -27,12 +27,14 @@ var _wsReconnectTimer = null;
 var _wsConfigRequest = null;
 var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
+var _gappedEndTimers = new Map();
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
 var _preAdoptionTurnEvents = new Map();
 var _agentThreadRefreshTimer = null;
 var _agentThreadRefreshVersion = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
+var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
 var _appliedLifecycleVersion = 0;
 
 if (window.visualViewport && _isMobile) {
@@ -517,18 +519,24 @@ function routeTurnEvent(message) {
   }
   var ordered = _turnEventQueue.push(message);
   drainLateJoinUpdates();
+  var orderedEnd = ordered.some(function (event) {
+    return event.action === 'stream_end';
+  });
+  if (orderedEnd) clearGappedEndTimer(message.turnId);
   for (var index = 0; index < ordered.length; index++) {
     dispatchWsMessage(ordered[index]);
   }
-  if (message.action === 'stream_end'
-    && _turnEventQueue.isLateJoinCandidate(message.turnId)) {
-    completeLateJoinTurn(message.turnId);
-  } else if (message.action === 'stream_end'
-    && !ordered.some(function (event) {
-      return event.action === 'stream_end';
-    })
-    && _turnEventQueue.isGappedEndCandidate(message.turnId)) {
-    completeGappedTurn(message.turnId);
+  if (message.action === 'stream_end' && !orderedEnd) {
+    var hasEndAuthority = Array.isArray(message.messages) && message.messages.length;
+    if (hasEndAuthority && _turnEventQueue.isLateJoinCandidate(message.turnId)) {
+      completeLateJoinTurn(message.turnId);
+    } else if (hasEndAuthority
+      && _turnEventQueue.isGappedEndCandidate(message.turnId)) {
+      completeGappedTurn(message.turnId);
+    } else if (_turnEventQueue.isLateJoinCandidate(message.turnId)
+      || _turnEventQueue.isGappedEndCandidate(message.turnId)) {
+      scheduleGappedEndCompletion(message);
+    }
   } else if (_turnEventQueue.isResumeCandidate(message.turnId)) {
     resumeLateJoinAtCheckpoint(message.turnId);
   }
@@ -536,6 +544,27 @@ function routeTurnEvent(message) {
     && !_handledControlEvents.has(strictEventKey(message))) {
     scheduleControlEventFallback(message);
   }
+}
+
+function clearGappedEndTimer(turnId) {
+  var timer = _gappedEndTimers.get(turnId);
+  if (timer) clearTimeout(timer);
+  _gappedEndTimers.delete(turnId);
+}
+
+function scheduleGappedEndCompletion(message) {
+  if (_gappedEndTimers.has(message.turnId)) return;
+  var timer = setTimeout(function () {
+    _gappedEndTimers.delete(message.turnId);
+    if (message.sessionId !== state.wsSessionId) return;
+    if (_turnEventQueue.isLateJoinCandidate(message.turnId)) {
+      completeLateJoinTurn(message.turnId);
+    } else if (_turnEventQueue.isGappedEndCandidate(message.turnId)) {
+      completeGappedTurn(message.turnId);
+    }
+  }, GAPPED_END_GRACE_MS);
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  _gappedEndTimers.set(message.turnId, timer);
 }
 
 function completeLateJoinTurn(turnId) {
@@ -563,6 +592,7 @@ function completeGappedTurn(turnId) {
 
 function handleGappedTurnCompletion(completion) {
   if (!completion || completion.sessionId !== state.wsSessionId) return false;
+  clearGappedEndTimer(completion.turnId);
   // A missing block-start means strict authority cannot be mapped onto the
   // partial coordinator state. Discard that preview, then render the complete
   // terminal authority as one anchored historical turn.
@@ -577,6 +607,7 @@ function handleGappedTurnCompletion(completion) {
   mergeLateJoinAuthority(completion, true, true);
   _appliedLifecycleVersion++;
   updateSendBtn();
+  scheduleTurnEndRecovery(completion.sessionId);
   return true;
 }
 
@@ -1009,6 +1040,7 @@ function handleStrictFrame(message, type) {
 }
 
 function handleStrictTurnEnd(message) {
+  clearGappedEndTimer(message.turnId);
   _strictStatusAuthority = true;
   var endMessages = Array.isArray(message.messages)
     ? message.messages.slice()
@@ -1037,10 +1069,38 @@ function handleStrictTurnEnd(message) {
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
+  if (message.recoveryRequired) scheduleTurnEndRecovery(message.sessionId);
+}
+
+function scheduleTurnEndRecovery(sessionId, attempt) {
+  attempt = attempt || 0;
+  var delays = [150, 800, 2000];
+  setTimeout(function () {
+    if (state.wsSessionId !== sessionId) return;
+    recoverMissing('').then(function (result) {
+      if (state.wsSessionId !== sessionId) return;
+      if (attempt + 1 < delays.length
+        && (!result || result.status === 'running')) {
+        scheduleTurnEndRecovery(sessionId, attempt + 1);
+      }
+    }).catch(function () {
+      if (attempt + 1 < delays.length) {
+        scheduleTurnEndRecovery(sessionId, attempt + 1);
+      }
+    });
+  }, delays[attempt]);
 }
 
 function handleLateJoinCompletion(completion) {
+  clearGappedEndTimer(completion.turnId);
   mergeLateJoinAuthority(completion, true);
+  settlePendingAtTurnEnd(completion.turnId);
+  state.wsRunning = hasOutstandingTurns();
+  _appliedLifecycleVersion++;
+  updateSendBtn();
+  if (!completion.messages?.length || completion.end?.recoveryRequired) {
+    scheduleTurnEndRecovery(completion.sessionId);
+  }
 }
 
 function mergeLateJoinAuthority(completion, completed, forceRender) {
@@ -1126,7 +1186,6 @@ function handleStrictMessages(envelope) {
   var remaining = [];
   var added = false;
   var identities = [];
-  var terminalTurn = false;
   for (var index = 0; index < envelope.messages.length; index++) {
     var message = envelope.messages[index];
     var identity = strictMessageIdentity(envelope, message, index);
@@ -1138,7 +1197,6 @@ function handleStrictMessages(envelope) {
       _strictLifecycle: true,
       _strictManaged: message.type === 'assistant' || message.type === 'summary',
     });
-    if (isTerminalAssistantMessage(message)) terminalTurn = true;
     removeHistoricalMessageNodes(
       message.uuid || '',
       message.nativeId || '',
@@ -1154,13 +1212,6 @@ function handleStrictMessages(envelope) {
     _streamCoordinator.ingestAuthoritative({
       ...identity,
       message: message,
-    });
-  }
-  if (terminalTurn) {
-    _strictStatusAuthority = true;
-    _streamCoordinator.endTurn({
-      sessionId: envelope.sessionId,
-      turnId: envelope.turnId,
     });
   }
   drainStrictStreamOperations();
@@ -1206,6 +1257,8 @@ function resetStreamSessionState() {
   _connectionRecovery = null;
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();
+  for (var endTimer of _gappedEndTimers.values()) clearTimeout(endTimer);
+  _gappedEndTimers.clear();
   _handledControlEvents.clear();
   _controlRequestState.clear();
   _preAdoptionTurnEvents.clear();
