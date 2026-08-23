@@ -404,6 +404,10 @@ body.browse-view #content { scrollbar-gutter: stable; }
 
 
 /* diff2html dark overrides */
+.diff-render-staging {
+  position: fixed; left: -100000px; top: 0; z-index: -1;
+  visibility: hidden; pointer-events: none;
+}
 .diff-container .d2h-file-header { display: none; }
 .diff-container .d2h-info { display: none !important; }
 .diff-container .d2h-file-wrapper { border: none !important; margin: 0 !important; }

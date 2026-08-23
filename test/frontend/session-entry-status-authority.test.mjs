@@ -68,4 +68,49 @@ test('session entry chooses the newest status authority', async () => {
     h.window.resolveSessionRunningAfterFetch(result, [], 'claude'),
     false,
   );
+
+  assert.equal(
+    h.window.resolveSessionRunningAfterFetch({
+      status: 'running',
+      liveLifecycleChanged: false,
+    }, [{
+      type: 'assistant',
+      content: [{ type: 'text', text: 'done' }],
+      stopReason: 'end_turn',
+    }], 'codex'),
+    false,
+    'terminal REST history overrides a stale running status',
+  );
+  assert.equal(
+    h.window.resolveSessionRunningAfterFetch({
+      status: 'running',
+      liveLifecycleChanged: false,
+    }, [
+      {
+        type: 'assistant',
+        content: [{ type: 'text', text: 'previous answer' }],
+        stopReason: 'end_turn',
+      },
+      {
+        type: 'user',
+        content: 'new prompt',
+      },
+    ], 'codex'),
+    true,
+    'a later user prompt keeps the authoritative running status',
+  );
+
+  h.state.pendingSentMessages = [{
+    id: 'queued-turn',
+    failed: false,
+    sessionId,
+  }];
+  assert.equal(
+    h.window.resolveSessionRunningAfterFetch({
+      status: 'completed',
+      liveLifecycleChanged: false,
+    }, [], 'codex'),
+    true,
+    'a completed REST snapshot cannot clear a locally queued turn',
+  );
 });

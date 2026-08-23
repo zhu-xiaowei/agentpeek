@@ -109,4 +109,9 @@ test('new Claude session stream_end settles the first optimistic send without a 
       ?.classList.contains('stream-committed'),
     true,
   );
+  assert.equal(h.document.querySelectorAll('.assistant-turn').length, 1);
+  assert.equal(
+    h.document.querySelector('.assistant-turn')?.textContent,
+    'Hi! What can I help you with today?',
+  );
 });

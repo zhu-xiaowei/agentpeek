@@ -26,6 +26,15 @@ test('new-session REST and live user authority promote one optimistic bubble', a
   const request = deferred();
   h.setApiHandler(() => request.promise);
 
+  h.hooks.handleWsMessage({
+    action: 'send_message_result',
+    sessionId: 'wrong-session',
+    turnId: 'sent-from-another-tab',
+    ok: true,
+  });
+  await h.tick(0);
+  assert.equal(h.state.appState.session, '__new__');
+
   h.hooks.handleWsMessage(turnEvent('codex:new-thread', 'sent-1', 1, 'messages', {
     messages: [{
       uuid: 'live-user',

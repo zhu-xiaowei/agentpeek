@@ -158,6 +158,49 @@ export class TurnEventQueue {
     return false;
   }
 
+  isGappedEndCandidate(turnId) {
+    var turn = this.turns.get(turnId);
+    if (!turn || turn.nextSeq === 0 || turn.pending.has(turn.nextSeq)) {
+      return false;
+    }
+    for (var event of turn.pending.values()) {
+      if (event.action === 'stream_end'
+        && Array.isArray(event.messages)
+        && event.messages.length) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  completeGappedEnd(turnId) {
+    if (!this.isGappedEndCandidate(turnId)) return false;
+    var turn = this.turns.get(turnId);
+    var events = Array.from(turn.applied.values())
+      .concat(Array.from(turn.pending.values()))
+      .sort(function (left, right) { return left.seq - right.seq; });
+    var end = events.find(function (event) {
+      return event.action === 'stream_end';
+    }) || null;
+    var authorityEvents = events.slice();
+    if (Array.isArray(end?.messages)) {
+      authorityEvents.push({
+        action: 'messages',
+        messages: end.messages,
+      });
+    }
+    this.lateJoinCompletions.push({
+      sessionId: end?.sessionId || events[0]?.sessionId || '',
+      turnId: turnId,
+      messages: this.messagesFromEvents(authorityEvents),
+      end: end,
+      gapped: true,
+      missingSeq: turn.nextSeq,
+    });
+    this.closeTurn(turnId);
+    return true;
+  }
+
   completeLateJoin(turnId) {
     if (!this.isLateJoinCandidate(turnId)) return false;
     var turn = this.turns.get(turnId);
@@ -921,6 +964,19 @@ export class StreamingDomRenderer {
 
   applyOperations(operations) {
     for (var operation of operations || []) this.applyOperation(operation);
+  }
+
+  discardTurn(turnId) {
+    var turn = this.turnElements.get(turnId);
+    if (turn) {
+      turn.remove();
+      this.onMutation(turn);
+    }
+    this.turnElements.delete(turnId);
+    for (var key of Array.from(this.blockViews.keys())) {
+      if (key.startsWith(turnId + ':')) this.blockViews.delete(key);
+    }
+    return !!turn;
   }
 
   applyOperation(operation) {

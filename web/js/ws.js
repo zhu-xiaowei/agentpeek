@@ -20,8 +20,11 @@ var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
 var _reconnectingTurns = new Set();
+var _queuedTurnIds = new Set();
 var _connectionRecovery = null;
 var _wsReconnectTimer = null;
+var _wsConfigRequest = null;
+var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
@@ -167,21 +170,33 @@ function connectWs(_, projectHash) {
     clearTimeout(_wsReconnectTimer);
     _wsReconnectTimer = null;
   }
-  if (!state.WS_URL) {
-    // First launch + no cached _wsurl: fetch config, then retry once
-    var args = [_, projectHash];
-    api('/api/bridge/config').then(function (cfg) {
-      if (cfg.wsUrl) {
-        state.WS_URL = cfg.wsUrl;
-        localStorage.setItem('_wsurl', cfg.wsUrl);
-        connectWs.apply(null, args);
-      }
-    }).catch(function () {});
-    return;
-  }
   if (projectHash) {
     state.wsProjectHash = projectHash;
     state.wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+  if (!state.WS_URL) {
+    // First launch + no cached _wsurl: one config request owns the eventual
+    // connection. Concurrent callers (page setup + a fast first send) share it.
+    var generation = _wsConnectionGeneration;
+    if (_wsConfigRequest?.generation === generation) return;
+    var request = { generation: generation, promise: null };
+    _wsConfigRequest = request;
+    request.promise = api('/api/bridge/config').then(function (cfg) {
+      if (generation !== _wsConnectionGeneration) return;
+      if (cfg.wsUrl) {
+        state.WS_URL = cfg.wsUrl;
+        localStorage.setItem('_wsurl', cfg.wsUrl);
+        connectWs();
+      }
+    }).catch(function () {}).finally(function () {
+      if (_wsConfigRequest === request) _wsConfigRequest = null;
+    });
+    return;
+  }
+  if (state.ws
+    && (state.ws.readyState === WebSocket.OPEN
+      || state.ws.readyState === WebSocket.CONNECTING)) {
+    return;
   }
   if (state.ws) {
     state.ws.onclose = null;
@@ -226,11 +241,21 @@ function connectWs(_, projectHash) {
 function recoverSubscribedSession() {
   if (!state.wsSessionId) return false;
   subscribeSession(state.wsSessionId);
+  if (!_connectionRecovery && hasOutstandingTurns()) {
+    beginSessionConnectionRecovery();
+  }
   if (_connectionRecovery
     && _connectionRecovery.sessionId === state.wsSessionId) {
     startSessionConnectionRecovery(_connectionRecovery);
   } else if (state.wsLastTimestamp) {
-    recoverMissing();
+    recoverMissing().then(function (result) {
+      state.wsRunning = resolveSessionRunningAfterFetch(
+        result,
+        state.wsAllMessages,
+        state.appState.runtime,
+      );
+      updateSendBtn();
+    }).catch(function () {});
   }
   return true;
 }
@@ -271,6 +296,10 @@ function startSessionConnectionRecovery(recovery) {
   recoverMissing().then(function (result) {
     if (recovery !== _connectionRecovery) return;
     recovery.sessionStatus = result?.status || '';
+    if (recovery.sessionStatus === 'running'
+      && hasTerminalAssistantTail(state.wsAllMessages)) {
+      recovery.sessionStatus = 'completed';
+    }
     finishSessionConnectionRecovery(recovery);
   });
   return true;
@@ -281,6 +310,7 @@ function settleRecoveredTurns(turnIds) {
   for (var turnId of turnIds || []) {
     if (_streamCoordinator.settleTurn(turnId)) settled++;
     _turnEventQueue.closeTurn(turnId);
+    _queuedTurnIds.delete(turnId);
     _checkpointResumedTurns.delete(turnId);
     _reconnectingTurns.delete(turnId);
   }
@@ -312,6 +342,13 @@ function finishSessionConnectionRecovery(recovery) {
 function resumeSessionForeground() {
   if (!state.appState.session || !state.WS_URL) return false;
   beginSessionConnectionRecovery();
+  if (state.ws?.readyState === WebSocket.OPEN) {
+    recoverSubscribedSession();
+    return true;
+  }
+  if (state.ws?.readyState === WebSocket.CONNECTING) {
+    return true;
+  }
   connectWs();
   return true;
 }
@@ -438,6 +475,12 @@ function routeTurnEvent(message) {
   if (message.action === 'stream_end'
     && _turnEventQueue.isLateJoinCandidate(message.turnId)) {
     completeLateJoinTurn(message.turnId);
+  } else if (message.action === 'stream_end'
+    && !ordered.some(function (event) {
+      return event.action === 'stream_end';
+    })
+    && _turnEventQueue.isGappedEndCandidate(message.turnId)) {
+    completeGappedTurn(message.turnId);
   } else if (_turnEventQueue.isResumeCandidate(message.turnId)) {
     resumeLateJoinAtCheckpoint(message.turnId);
   }
@@ -453,6 +496,39 @@ function completeLateJoinTurn(turnId) {
   for (var lateIndex = 0; lateIndex < lateJoins.length; lateIndex++) {
     handleLateJoinCompletion(lateJoins[lateIndex]);
   }
+  return true;
+}
+
+function completeGappedTurn(turnId) {
+  if (!_turnEventQueue.completeGappedEnd(turnId)) return false;
+  var completions = _turnEventQueue.takeLateJoinCompletions();
+  for (var index = 0; index < completions.length; index++) {
+    var completion = completions[index];
+    if (!completion.gapped) {
+      handleLateJoinCompletion(completion);
+      continue;
+    }
+    handleGappedTurnCompletion(completion);
+  }
+  return true;
+}
+
+function handleGappedTurnCompletion(completion) {
+  if (!completion || completion.sessionId !== state.wsSessionId) return false;
+  // A missing block-start means strict authority cannot be mapped onto the
+  // partial coordinator state. Discard that preview, then render the complete
+  // terminal authority as one anchored historical turn.
+  _strictStatusAuthority = true;
+  _streamCoordinator.settleTurn(completion.turnId);
+  drainStrictStreamOperations();
+  _strictStreamRenderer?.discardTurn(completion.turnId);
+  _queuedTurnIds.delete(completion.turnId);
+  _checkpointResumedTurns.delete(completion.turnId);
+  _reconnectingTurns.delete(completion.turnId);
+  settlePendingAtTurnEnd(completion.turnId);
+  mergeLateJoinAuthority(completion, true, true);
+  _appliedLifecycleVersion++;
+  updateSendBtn();
   return true;
 }
 
@@ -507,6 +583,9 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
+    } else if (msg.action === 'send_message_received') {
+      var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
+      if (receivedPending) receivedPending.serverReceived = true;
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -515,6 +594,17 @@ function dispatchWsMessage(msg) {
       // multiple pending sends, so it never mutates optimistic UI state.
       if (state.pendingSentMessages.length) {
         var pending = msg.turnId ? findPending(msg.turnId) : null;
+        if (pending && msg.errorCode === 'bridge_offline') {
+          pending.serverReceived = false;
+          schedulePendingTransportRetry(pending);
+          return;
+        }
+        if (pending && msg.ok && msg.queued) {
+          pending.queued = true;
+          state.wsRunning = hasOutstandingTurns();
+          updateSendBtn();
+          return;
+        }
         if (pending && !pending.delivered && handleCodexSendConflict(pending, msg)) return;
         if (pending && !pending.delivered) {
           finishCodexTakeover(pending);
@@ -534,8 +624,20 @@ function dispatchWsMessage(msg) {
       }
       state.wsRunning = hasOutstandingTurns();
       updateSendBtn();
-      // New session: bridge spawned CC (headless), returned sessionId
-      if (msg.sessionId && state.appState.session === '__new__' && (!msg.requestId || msg.requestId === state.wsRequestId)) {
+      // New session: adopt only the result that belongs to this tab's pending
+      // turn. Current Bridges echo requestId; legacy unscoped results are safe
+      // only when their turnId matches this page's optimistic prompt.
+      var matchesNewSessionResult = msg.requestId
+        ? msg.requestId === state.wsRequestId
+        : !!(msg.turnId && (
+          pending
+          || document.querySelector(
+            '.msg-user[data-anchor="' + msg.turnId + '"]',
+          )
+        ));
+      if (msg.sessionId
+        && state.appState.session === '__new__'
+        && matchesNewSessionResult) {
         state.appState.session = msg.sessionId;
         state.appState.sessionPreview = 'New Session';
         state.rootSessionId = msg.sessionId;
@@ -823,6 +925,7 @@ function drainStrictStreamOperations() {
       state.wsRunning = true;
     } else if (operation.type === 'completeTurn') {
       completedTurn = true;
+      _queuedTurnIds.delete(operation.turnId);
       _checkpointResumedTurns.delete(operation.turnId);
       _reconnectingTurns.delete(operation.turnId);
     }
@@ -836,6 +939,7 @@ function drainStrictStreamOperations() {
 
 function handleStrictTurnStart(message) {
   _strictStatusAuthority = true;
+  _queuedTurnIds.delete(message.turnId);
   _streamCoordinator.startTurn(message);
   drainStrictStreamOperations();
   state.wsRunning = true;
@@ -878,6 +982,7 @@ function handleStrictTurnEnd(message) {
   _streamCoordinator.endTurn(message);
   drainStrictStreamOperations();
   _turnEventQueue.closeTurn(message.turnId);
+  _queuedTurnIds.delete(message.turnId);
   _checkpointResumedTurns.delete(message.turnId);
   _reconnectingTurns.delete(message.turnId);
   settlePendingAtTurnEnd(message.turnId);
@@ -890,13 +995,13 @@ function handleLateJoinCompletion(completion) {
   mergeLateJoinAuthority(completion, true);
 }
 
-function mergeLateJoinAuthority(completion, completed) {
+function mergeLateJoinAuthority(completion, completed, forceRender) {
   if (!completion || completion.sessionId !== state.wsSessionId) return;
   var incoming = [];
   for (var source of completion.messages || []) {
     if (!source) continue;
     incoming.push(Object.assign({}, source, {
-      turnId: source.turnId || completion.turnId,
+      turnId: source.turnId || (completed ? completion.turnId : ''),
     }));
   }
   if (_reconnectingTurns.has(completion.turnId)
@@ -919,16 +1024,36 @@ function mergeLateJoinAuthority(completion, completed) {
     return;
   }
   if (completed) _strictStatusAuthority = true;
+  if (completed) _queuedTurnIds.delete(completion.turnId);
   if (completed) _reconnectingTurns.delete(completion.turnId);
   if (state._wsBuffer !== null) {
     state._wsBuffer.push.apply(state._wsBuffer, incoming);
-    state.wsRunning = hasOutstandingTurns();
-    updateSendBtn();
-    return;
+    // Initial REST can still be in flight when a complete stream_end crosses
+    // a missing sequence. The live preview has already been discarded, so
+    // terminal authority must render now; the buffered copy will dedupe when
+    // the fetch finishes. Non-terminal late-join updates remain buffered.
+    if (!forceRender) {
+      state.wsRunning = hasOutstandingTurns();
+      updateSendBtn();
+      return;
+    }
   }
   var messages = [];
   for (var message of incoming) {
+    if (forceRender) {
+      var existing = state.wsAllMessages.find(function (candidate) {
+        return (message.nativeId && candidate.nativeId === message.nativeId)
+          || (message.uuid && candidate.uuid === message.uuid);
+      });
+      if (existing) {
+        existing.turnId = existing.turnId || completion.turnId;
+        existing._strictManaged = false;
+        messages.push(existing);
+        continue;
+      }
+    }
     if (!trackMessageUuid(message)) continue;
+    if (forceRender) message._strictManaged = false;
     messages.push(message);
     state.wsAllMessages.push(message);
     state.wsMessageCount++;
@@ -937,6 +1062,12 @@ function mergeLateJoinAuthority(completion, completed) {
   if (messages.length) {
     updateLastTurn(messages);
     _strictStreamRenderer?.attachTurnToAnchor(completion.turnId);
+    if (completed) {
+      _strictStreamRenderer?.applyOperation({
+        type: 'completeTurn',
+        turnId: completion.turnId,
+      });
+    }
     showStats(state.wsMessageCount + ' messages (late join)');
   }
   state.wsRunning = hasOutstandingTurns();
@@ -1023,6 +1154,7 @@ function resetStreamSessionState() {
   _turnEventQueue.reset();
   _checkpointResumedTurns.clear();
   _reconnectingTurns.clear();
+  _queuedTurnIds.clear();
   _connectionRecovery = null;
   for (var timer of _controlEventTimers.values()) clearTimeout(timer);
   _controlEventTimers.clear();
@@ -1116,6 +1248,7 @@ function setWsStatus(status) {
 }
 
 function disconnectWs() {
+  _wsConnectionGeneration++;
   if (window.resetCommandRequest) window.resetCommandRequest();
   if (_wsReconnectTimer) {
     clearTimeout(_wsReconnectTimer);
@@ -1283,10 +1416,33 @@ function rememberLatestSend(turnId, failed, explicitOrder) {
 function hasOutstandingTurns() {
   if (_streamCoordinator.hasActiveTurns()) return true;
   if (_reconnectingTurns.size) return true;
+  if (_queuedTurnIds.size) return true;
+  if (state.pendingSentMessages.some(function (pending) {
+    return !pending.failed;
+  })) return true;
+  var pending = _latestTurnId ? findPending(_latestTurnId) : null;
   return !!(_latestTurnId
     && !_latestSendFailed
     && !_interruptedTurns[_latestTurnId]
-    && findPending(_latestTurnId));
+    && pending
+    && !pending.failed);
+}
+
+function latestOutstandingTurnId() {
+  var latestPending = null;
+  for (var pending of state.pendingSentMessages) {
+    if (pending.failed || pending.sessionId !== state.wsSessionId) continue;
+    if (!latestPending || (pending.seq || 0) > (latestPending.seq || 0)) {
+      latestPending = pending;
+    }
+  }
+  if (latestPending) return latestPending.id;
+  var queued = Array.from(_queuedTurnIds);
+  if (queued.length) return queued[queued.length - 1];
+  var active = _streamCoordinator.activeTurnIds();
+  if (active.length) return active[active.length - 1];
+  var reconnecting = Array.from(_reconnectingTurns);
+  return reconnecting.length ? reconnecting[reconnecting.length - 1] : '';
 }
 
 function activeTurnForInterrupt() {
@@ -1488,11 +1644,28 @@ function updateLastTurn(explicitMessages) {
     // Assistant message
     if (msg.type !== 'assistant' && msg.type !== 'summary') continue;
 
+    // The watcher/REST copy can arrive without turnId while the strict live
+    // turn is still revealing the same assistant response. Keep the row in
+    // state for persistence/dedup, but do not render a second historical turn;
+    // strict authority (messages/stream_end) patches the existing live turn.
+    if (!msg.turnId
+      && _strictStatusAuthority
+      && _streamCoordinator.hasActiveTurns()
+      && _reconnectingTurns.size === 0) {
+      msg._strictLifecycle = true;
+      msg._strictManaged = true;
+      continue;
+    }
+
     var html = renderSingleMessage(msg, state.wsAllMessages, state.appState.runtime);
     if (!html) continue;
     html = applyThinkSecs(html); // carry live-measured thinking seconds into the empty authoritative node
 
-    insertAssistantItemAtTimestamp(container, html, msg.timestamp);
+    if (msg.turnId) {
+      insertAssistantItemForTurn(container, html, msg.turnId);
+    } else {
+      insertAssistantItemAtTimestamp(container, html, msg.timestamp);
+    }
   }
   markTurnAdjacency(container); // turns may have been added this batch
   var nonStrictMessages = state.wsAllMessages.filter(function (message) {
@@ -1611,9 +1784,32 @@ async function bufferAndFetch(sessionId, after) {
 function resolveSessionRunningAfterFetch(result, messages, runtime) {
   // A lifecycle event applied while REST was in flight is causally newer than
   // the REST snapshot. Preserve the state established by start/end/permission.
+  if (result?.status === 'needs_input') return false;
+  if (hasOutstandingTurns()) return true;
   if (result?.liveLifecycleChanged) return state.wsRunning;
-  if (result?.status) return result.status === 'running';
+  if (result?.status) {
+    if (result.status === 'running' && hasTerminalAssistantTail(messages)) {
+      return false;
+    }
+    return result.status === 'running';
+  }
   return deriveRunning(messages, '', runtime);
+}
+
+function hasTerminalAssistantTail(messages) {
+  for (var index = (messages || []).length - 1; index >= 0; index--) {
+    var message = messages[index];
+    if (message?.type === 'assistant' || message?.type === 'summary') {
+      return isTerminalAssistantMessage(message);
+    }
+    if (message?.type === 'user'
+      && !isInterruptMsg(message)
+      && !(typeof isToolResultOnly === 'function' && isToolResultOnly(message))
+      && !window.isSubagentNotificationMsg?.(message)) {
+      return false;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1901,6 +2097,7 @@ document.addEventListener('keydown', function (e) {
 var _sendOrder = 0;
 
 function doSend(fullText, displayText, images) {
+  var previousTurnId = latestOutstandingTurnId();
   state.wsRunning = true;
   var device = state.appState.device || '';
   // Unique per-send id, round-tripped through the bridge in send_message_result
@@ -1912,16 +2109,22 @@ function doSend(fullText, displayText, images) {
     ? crypto.randomUUID()
     : sentAt + '-' + Math.random().toString(36).slice(2));
   rememberLatestSend(msgId, false, seq);
+  _queuedTurnIds.add(msgId);
   updateSendBtn();
   var sendPayload;
   if (state.appState.session === '__new__' && state.wsProjectHash) {
+    if (!state.wsRequestId) {
+      state.wsRequestId = crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    }
     var asAgent = state.appState.runtime === 'claude'
       && !!(document.getElementById('newAsAgent') && document.getElementById('newAsAgent').checked);
-    sendPayload = { action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, turnId: msgId, text: fullText, device: device, runtime: state.appState.runtime, asAgent: asAgent };
+    sendPayload = { action: 'send_message', projectHash: state.wsProjectHash, requestId: state.wsRequestId, turnId: msgId, previousTurnId: previousTurnId, text: fullText, device: device, runtime: state.appState.runtime, asAgent: asAgent };
   } else {
     // projectHash lets the bridge resolve cwd even if the jsonl is gone (deleted session).
     var ph = state.appState.project && state.appState.project.hash;
-    sendPayload = { action: 'send_message', sessionId: state.wsSessionId, projectHash: ph, turnId: msgId, text: fullText, device: device };
+    sendPayload = { action: 'send_message', sessionId: state.wsSessionId, projectHash: ph, turnId: msgId, previousTurnId: previousTurnId, text: fullText, device: device };
   }
   wsSendReliable(sendPayload);
 
@@ -1949,7 +2152,8 @@ function doSend(fullText, displayText, images) {
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
   // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
-  state.pendingSentMessages.push({ id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload });
+  var pendingSend = { id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload, serverReceived: false, transportRetries: 0 };
+  state.pendingSentMessages.push(pendingSend);
   var container = document.querySelector('.messages');
   if (container) {
     var imgHtml = images.map(function (img) {
@@ -1965,6 +2169,7 @@ function doSend(fullText, displayText, images) {
     state.stickBottom = true; // sending a message = follow the incoming reply
     document.getElementById('content').scrollTo({ top: 99999, behavior: 'smooth' });
   }
+  schedulePendingTransportRetry(pendingSend);
   scheduleSendTimeout(msgId);
 }
 
@@ -1972,6 +2177,18 @@ function doSend(fullText, displayText, images) {
 // pending bubble within this window, reconcile against the server: the message
 // may well have reached CC and only the ack/echo was lost.
 var SEND_TIMEOUT_MS = 12000;
+var SERVER_RECEIPT_TIMEOUT_MS = window.__APEEK_TEST__ ? 20 : 2000;
+
+function schedulePendingTransportRetry(pending) {
+  if (!pending || pending.delivered || pending.transportRetries >= 1) return;
+  clearTimeout(pending.transportTimer);
+  pending.transportTimer = setTimeout(function () {
+    if (pending.delivered || pending.serverReceived
+      || pending.transportRetries >= 1) return;
+    pending.transportRetries++;
+    wsSendReliable(pending.sendPayload);
+  }, SERVER_RECEIPT_TIMEOUT_MS);
+}
 
 function scheduleSendTimeout(msgId) {
   var timer = setTimeout(function () { reconcilePendingSend(msgId); }, SEND_TIMEOUT_MS);
@@ -1986,6 +2203,7 @@ function findPending(msgId) {
 }
 
 function removePending(pending) {
+  clearTimeout(pending?.transportTimer);
   var idx = state.pendingSentMessages.indexOf(pending);
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
 }
@@ -2073,11 +2291,15 @@ function confirmCodexTakeover() {
 // copy arrives, tryDedup finds this delivered pending and drops the duplicate
 // (see tryDedup). Failure: red "Not delivered · Retry" and stop the spinner.
 function resolvePending(pending, ok, error) {
+  clearTimeout(pending.transportTimer);
+  pending.queued = false;
   pending.delivered = true;
   pending.failed = !ok;
   if (ok) {
     markPendingTime(pending);
   } else {
+    _queuedTurnIds.delete(pending.id);
+    rememberLatestSend(pending.id, true);
     markPendingFailed(pending, error);
     state.wsRunning = hasOutstandingTurns();
     updateSendBtn();
@@ -2085,6 +2307,7 @@ function resolvePending(pending, ok, error) {
 }
 
 function completeLocalCommand(pending, result) {
+  _queuedTurnIds.delete(pending.id);
   markPendingTime(pending);
   promoteEchoedBubble(pending, { timestamp: new Date().toISOString() });
   var output = String(result.commandOutput || '');
@@ -2178,6 +2401,7 @@ function markPendingFailed(pending, error) {
 async function reconcilePendingSend(msgId) {
   var pending = findPending(msgId);
   if (!pending || pending.delivered) return;               // already resolved
+  if (pending.queued) return;                              // accepted into the Bridge's causal queue
   if (pending.awaitingTakeover) return;                    // user has not chosen whether to take over
   if (pending.sessionId !== state.wsSessionId) return;     // user navigated away; leave it
   var remaining = SEND_TIMEOUT_MS - (Date.now() - (pending.sentAt || 0));
@@ -2248,6 +2472,7 @@ function tryDedup(msg) {
 
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
+  clearTimeout(pending.transportTimer);
   // The authoritative echo can beat the final send ack. Settle the visible
   // optimistic bubble from its original send time before retiring its pending
   // record, so rapid sends never show ack-arrival order as their timestamps.

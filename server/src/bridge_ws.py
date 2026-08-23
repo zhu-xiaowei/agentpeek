@@ -672,6 +672,11 @@ def _handle_send_message(body, account_id, endpoint, connection_id=""):
     payload = dict(body)
     if connection_id:
         payload["replyConnectionId"] = connection_id
+        _post_to_connection(endpoint, connection_id, {
+            "action": "send_message_received",
+            "turnId": payload.get("turnId", ""),
+            "requestId": payload.get("requestId", ""),
+        })
     return _handle_send_to_bridge(
         payload,
         account_id,
@@ -693,10 +698,23 @@ def _handle_send_to_bridge(
     payload["action"] = action
     if preserve_device and device:
         payload["device"] = device
+    delivered = 0
     for item in _query_connections(account_id, "bridge"):
         if device and item.get("deviceName", "") != device:
             continue
-        _post_to_connection(endpoint, item["connectionId"], payload)
+        if _post_to_connection(endpoint, item["connectionId"], payload) is not False:
+            delivered += 1
+    if action == "send_message" and delivered == 0:
+        reply_connection_id = payload.get("replyConnectionId", "")
+        if reply_connection_id:
+            _post_to_connection(endpoint, reply_connection_id, {
+                "action": "send_message_result",
+                "ok": False,
+                "turnId": payload.get("turnId", ""),
+                "requestId": payload.get("requestId", ""),
+                "error": "Bridge offline — retry when the device reconnects",
+                "errorCode": "bridge_offline",
+            })
     return {"statusCode": 200}
 
 

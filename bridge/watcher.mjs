@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS, CLAUDE_JOBS, VALID_TYPES, NEEDS_POLLING, AGENTS_POLL_INTERVAL_MS } from './config.mjs';
-import { post } from './http.mjs';
+import { post, postRequired } from './http.mjs';
 import { synced, extractForApp, uploadMessages } from './extract.mjs';
 import { deliverRealtimeMessages } from './realtime-delivery.mjs';
 import { clearLiveMessage } from './live-message-registry.mjs';
@@ -400,30 +400,47 @@ export function startJobsWatcher(config) {
   setInterval(() => pollAgentStates(config), AGENTS_POLL_INTERVAL_MS);
 }
 
-async function pollAgentStates(config) {
+export function resetAgentPollState() {
+  _jobsState.clear();
+}
+
+export async function pollAgentStates(config, options = {}) {
   let agents;
-  try { agents = getAgentsJson(true); } catch { return; }
+  try {
+    agents = options.agents || getAgentsJson(true);
+  } catch {
+    return;
+  }
+  const findFile = options.findSessionFile || findSessionFile;
+  const ownsPool = options.poolOwns || poolOwns;
+  const readMetadata = options.getSessionMetadata || getSessionMetadata;
+  const pushMeta = options.pushAgentMeta || pushAgentMeta;
   for (const [sid, e] of agents) {
-    const filePath = findSessionFile(sid);
+    const filePath = findFile(sid);
     if (!filePath) continue;
     // Pool-owned = driven live by headless; skip so the daemon's stale 'done' doesn't override its running.
-    if (poolOwns(sid)) continue;
+    if (ownsPool(sid)) continue;
     // Title: --json name first, then the jsonl's first user message. At launch
     // both can be empty for a poll or two (name not inferred yet, jsonl not
     // written), so preview is part of the diff — a title arriving later re-pushes.
-    const metadata = getSessionMetadata(filePath);
+    const metadata = readMetadata(filePath);
     const preview = e.agentName || metadata.preview || 'Agent session';
     const old = _jobsState.get(sid);
     if (old && old.agentName === e.agentName && old.agentDetail === e.agentDetail && old.status === e.status && old.preview === preview) continue;
-    _jobsState.set(sid, { ...e, preview });
-    await pushAgentMeta(config, sid, e, filePath, preview, metadata.model);
+    try {
+      await pushMeta(config, sid, e, filePath, preview, metadata.model);
+      // Commit the dedupe snapshot only after the Server accepted the update.
+      // A transient POST failure must be retried on the next 8-second poll.
+      _jobsState.set(sid, { ...e, preview });
+    } catch (error) {
+      console.error(`[watcher] Agent ${sid.slice(0, 8)}: ${error.message}`);
+    }
   }
 }
 
 async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
   const projectHash = normalizeProjectHash(path.basename(path.dirname(filePath)));
   const stat = fs.statSync(filePath);
-  lastKnownStatus.set(sessionId, e.status);
   const sessionMeta = {
     id: sessionId,
     project: projectHash,
@@ -438,11 +455,12 @@ async function pushAgentMeta(config, sessionId, e, filePath, preview, model) {
     agentDetail: e.agentDetail,
   };
   trackAgentSession(sessionMeta);
-  await post('/api/bridge/sync-sessions', {
+  await postRequired('/api/bridge/sync-sessions', {
     deviceName: config.deviceName,
     os: process.platform,
     sessions: [sessionMeta],
   });
+  lastKnownStatus.set(sessionId, e.status);
 }
 
 export const claudeWatcherAdapter = defineRuntimeWatcher({

@@ -90,11 +90,8 @@ export function isPromptUserMessage(message) {
 }
 
 export function shouldCreateFinalInterrupt(runtime, result) {
-  return runtime === 'codex'
-    && (
-      result?.subtype === 'interrupted'
-      || result?.status === 'interrupted'
-    );
+  return result?.subtype === 'interrupted'
+    || result?.status === 'interrupted';
 }
 
 export class LiveTurnStream {
@@ -108,6 +105,7 @@ export class LiveTurnStream {
     this.nextSeq = 0;
     this.activeSourceBlockId = null;
     this.authoritativeMessages = new Map();
+    this.interruptSent = false;
   }
 
   start() {
@@ -195,11 +193,16 @@ export class LiveTurnStream {
   }
 
   #sendInterrupt(timestamp) {
-    if (this.ended) return false;
+    if (this.ended || this.interruptSent) return false;
+    this.interruptSent = true;
     return this.sendAuthoritative(
       createInterruptMessage(this.turnId, timestamp),
       { noCache: true },
     );
+  }
+
+  sendInterrupt(timestamp) {
+    return this.#sendInterrupt(timestamp);
   }
 
   sendEnd(options = {}) {

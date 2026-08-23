@@ -549,7 +549,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
         this.element = element;
       }
       draw() {
-        assert.equal(this.element.isConnected, false);
+        assert.equal(this.element.isConnected, true);
         contentHeight = 900;
         this.element.innerHTML = '<div class="d2h-file-wrapper">rendered diff</div>';
       }
@@ -608,6 +608,67 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
     window.Diff = originalDiff;
     window.Diff2HtmlUI = originalUi;
     state.stickBottom = originalStickBottom;
+  }
+});
+
+test('offscreen Edit keeps a measured height when its target initially reports zero', async () => {
+  const originalLoader = window.loadDiffViewer;
+  const originalDiff = window.Diff;
+  const originalUi = window.Diff2HtmlUI;
+  window.loadDiffViewer = async () => {
+    window.Diff = { createTwoFilesPatch: () => 'patch' };
+    window.Diff2HtmlUI = class {
+      constructor(element) {
+        this.element = element;
+      }
+      draw() {
+        this.element.innerHTML = '<div class="d2h-file-wrapper">offscreen diff</div>';
+        this.element.getBoundingClientRect = () => ({
+          width: 640,
+          height: 184,
+          top: 0,
+          right: 640,
+          bottom: 184,
+          left: 0,
+        });
+      }
+      highlightCode() {}
+    };
+  };
+
+  try {
+    document.body.innerHTML = '<div id="content"><div class="messages">'
+      + '<div class="tool-node"></div></div></div>';
+    const node = document.querySelector('.tool-node');
+    node.innerHTML = window.renderToolNode({
+      type: 'tool_use',
+      id: 'edit-offscreen-height',
+      name: 'Edit',
+      input: {
+        file_path: 'src/offscreen.js',
+        old_string: 'before',
+        new_string: 'after',
+      },
+    }, null, 'codex');
+    const diff = node.querySelector('.diff-container');
+    diff.getBoundingClientRect = () => ({
+      width: 0,
+      height: 0,
+      top: -2000,
+      right: 0,
+      bottom: -2000,
+      left: 0,
+    });
+
+    await window.afterToolDomMutation(node);
+
+    assert.equal(diff.dataset.diffState, 'ready');
+    assert.ok(parseFloat(diff.style.minHeight) > 10);
+    assert.match(diff.textContent, /offscreen diff/);
+  } finally {
+    window.loadDiffViewer = originalLoader;
+    window.Diff = originalDiff;
+    window.Diff2HtmlUI = originalUi;
   }
 });
 

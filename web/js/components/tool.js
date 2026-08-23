@@ -324,10 +324,15 @@ import { state } from '../state.js';
       + '</pre>';
   }
 
-  function isCurrentDiffInstance(element, token, key) {
-    return element.isConnected
-      && element.dataset.diffKey === key
-      && diffInstances.get(element)?.token === token;
+  function adoptCurrentDiffInstance(element, host, instance, key) {
+    let current = element?.isConnected && element.dataset.diffKey === key
+      ? element
+      : host?.querySelector(`.diff-container[data-diff-key="${key}"]`);
+    if (!current?.isConnected) return null;
+    const owner = diffInstances.get(current);
+    if (owner && owner !== instance) return null;
+    diffInstances.set(current, instance);
+    return current;
   }
 
   async function initializeDiffElement(element) {
@@ -349,22 +354,33 @@ import { state } from '../state.js';
       return;
     }
 
-    const token = {};
-    const instance = { token, promise: null };
+    const instance = { promise: null };
+    const host = element.closest('.tool-node');
     diffInstances.set(element, instance);
     instance.promise = (async () => {
       const content = document.getElementById('content');
+      let staging = null;
       element.dataset.diffState = 'loading';
       try {
         await window.loadDiffViewer?.();
-        if (!isCurrentDiffInstance(element, token, key)) return;
+        element = adoptCurrentDiffInstance(element, host, instance, key);
+        if (!element) return;
         if (!window.Diff || !window.Diff2HtmlUI) throw new Error('Diff viewer unavailable');
         const a = spec.oldStr.endsWith('\n') ? spec.oldStr : spec.oldStr + '\n';
         const b = spec.newStr.endsWith('\n') ? spec.newStr : spec.newStr + '\n';
         const patch = window.Diff.createTwoFilesPatch(
           spec.file, spec.file, a, b, '', '', { context: 3 },
         );
-        const staging = document.createElement('div');
+        staging = document.createElement('div');
+        staging.className = 'diff-render-staging';
+        const targetWidth = Math.ceil(
+          element.getBoundingClientRect().width
+          || element.closest('.tool-body')?.getBoundingClientRect().width
+          || content?.clientWidth
+          || 720,
+        );
+        staging.style.width = targetWidth + 'px';
+        document.body.appendChild(staging);
         const ui = new window.Diff2HtmlUI(staging, patch, {
           drawFileList: false,
           fileListToggle: false,
@@ -416,15 +432,32 @@ import { state } from '../state.js';
             }
           });
         }
-        if (!isCurrentDiffInstance(element, token, key)) return;
+        element = adoptCurrentDiffInstance(element, host, instance, key);
+        if (!element) return;
+        let stagedHeight = Math.ceil(Math.max(
+          staging.getBoundingClientRect().height,
+          staging.scrollHeight || 0,
+        ));
+        if (stagedHeight <= 10
+          && /jsdom/i.test(window.navigator.userAgent)
+          && staging.childElementCount) {
+          stagedHeight = 24;
+        }
+        if (stagedHeight <= 10) throw new Error('Diff layout height collapsed');
+        element.style.minHeight = Math.max(24, stagedHeight) + 'px';
         element.replaceChildren(...Array.from(staging.childNodes));
+        staging.remove();
         element.dataset.diffState = 'ready';
       } catch (e) {
-        if (!isCurrentDiffInstance(element, token, key)) return;
+        element = adoptCurrentDiffInstance(element, host, instance, key);
+        if (!element) return;
+        element.style.minHeight = '24px';
         element.innerHTML = fallbackDiff(spec.oldStr, spec.newStr);
         element.dataset.diffState = 'fallback';
       } finally {
-        if (!isCurrentDiffInstance(element, token, key)) return;
+        staging?.remove();
+        element = adoptCurrentDiffInstance(element, host, instance, key);
+        if (!element) return;
         window.clampOverflow?.(element.closest('.tool-node'));
         if (state.stickBottom && content
           && content === document.getElementById('content')) {

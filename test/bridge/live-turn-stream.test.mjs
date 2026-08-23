@@ -125,7 +125,29 @@ test('an interrupted end closes the block and emits one interrupt before stream_
   assert.deepEqual(sent[5].messages, sent[4].messages);
 });
 
-test('only Codex final status synthesizes an interrupt authority', () => {
+test('an explicit interrupt is emitted once and remains in terminal authority', () => {
+  const { turn, sent } = createTurn();
+  turn.start();
+  assert.equal(
+    turn.sendInterrupt('2026-08-22T00:00:00.000Z').action,
+    'messages',
+  );
+  assert.equal(turn.sendInterrupt('2026-08-22T00:00:01.000Z'), false);
+  turn.sendEnd({ interrupted: true });
+
+  assert.deepEqual(sent.map((event) => event.action), [
+    'stream_turn_start',
+    'messages',
+    'stream_end',
+  ]);
+  assert.equal(sent.at(-1).messages.length, 1);
+  assert.equal(
+    sent.at(-1).messages[0].content[0].text,
+    '[Request interrupted by user]',
+  );
+});
+
+test('every runtime final interrupted status synthesizes interrupt authority', () => {
   assert.equal(
     shouldCreateFinalInterrupt('codex', { status: 'interrupted' }),
     true,
@@ -136,7 +158,7 @@ test('only Codex final status synthesizes an interrupt authority', () => {
   );
   assert.equal(
     shouldCreateFinalInterrupt('claude', { subtype: 'interrupted' }),
-    false,
+    true,
   );
   assert.equal(
     shouldCreateFinalInterrupt('codex', { subtype: 'error_during_execution' }),

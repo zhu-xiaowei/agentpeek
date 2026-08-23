@@ -50,7 +50,7 @@ test('new Codex session sends the selected runtime to the Bridge', async () => {
     runtime: 'codex',
   };
   harness.state.wsProjectHash = '-workspace-project';
-  harness.state.wsRequestId = 'create-codex';
+  harness.state.wsRequestId = null;
 
   harness.window.doSend('hello', 'hello', []);
 
@@ -59,4 +59,22 @@ test('new Codex session sends the selected runtime to the Bridge', async () => {
   assert.equal(sent[0].runtime, 'codex');
   assert.equal(sent[0].asAgent, false);
   assert.equal(sent[0].projectHash, '-workspace-project');
+  assert.equal(typeof sent[0].requestId, 'string');
+  assert.ok(sent[0].requestId.length > 0);
+  assert.equal(sent[0].requestId, harness.state.wsRequestId);
+
+  harness.window.doSend('first', 'first', []);
+  harness.window.doSend('second', 'second', []);
+
+  const messages = sent.filter((message) => (
+    message.action === 'send_message'
+  ));
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].previousTurnId, '');
+  assert.equal(messages[1].previousTurnId, messages[0].turnId);
+  assert.equal(messages[2].previousTurnId, messages[1].turnId);
+  for (const pending of harness.state.pendingSentMessages) {
+    clearTimeout(pending.transportTimer);
+  }
+  harness.window.close();
 });

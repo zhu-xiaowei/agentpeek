@@ -112,4 +112,66 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
   assert.equal(turns.at(-1).classList.contains('follows-turn'), true);
   assert.equal(turns.at(-1).classList.contains('has-next-turn'), false);
   assert.equal(h.state.wsRunning, false);
+
+  const watcherSessionId = sessionId;
+  const watcherTurnId = 'turn-unscoped-watcher';
+  resetSession(h, { sessionId: watcherSessionId });
+  const container = h.document.querySelector('.messages');
+  container.innerHTML = '<div class="msg-user"'
+    + ` data-anchor="${watcherTurnId}">prompt</div>`;
+  const watcherEvent = (seq, action, extra = {}) => ({
+    action,
+    sessionId: watcherSessionId,
+    turnId: watcherTurnId,
+    seq,
+    ...extra,
+  });
+
+  h.hooks.handleWsMessage(watcherEvent(0, 'stream_turn_start'));
+  h.hooks.handleWsMessage(watcherEvent(
+    1,
+    'stream_block_start',
+    { kind: 'text' },
+  ));
+  h.hooks.handleWsMessage(watcherEvent(
+    2,
+    'stream_delta',
+    { chunk: 'answer' },
+  ));
+  await h.tick(10);
+
+  h.hooks.handleWsMessage({
+    action: 'messages',
+    sessionId: watcherSessionId,
+    messages: [{
+      uuid: 'watcher-answer',
+      nativeId: 'watcher:answer',
+      type: 'assistant',
+      content: [{ type: 'text', text: 'answer complete' }],
+      timestamp: '2026-08-22T00:00:00.000Z',
+      stopReason: 'end_turn',
+    }],
+  });
+  await h.tick(10);
+  assert.equal(container.querySelectorAll('.assistant-turn').length, 1);
+
+  h.hooks.handleWsMessage(watcherEvent(3, 'messages', {
+    messages: [{
+      uuid: 'strict-answer',
+      nativeId: 'strict:answer',
+      type: 'assistant',
+      content: [{ type: 'text', text: 'answer complete' }],
+      timestamp: '2026-08-22T00:00:00.000Z',
+      stopReason: 'end_turn',
+    }],
+  }));
+  h.hooks.handleWsMessage(watcherEvent(4, 'stream_end'));
+  await h.tick(80);
+
+  assert.equal(container.querySelectorAll('.assistant-turn').length, 1);
+  assert.equal(
+    container.textContent.split('answer complete').length - 1,
+    1,
+  );
+  h.window.close();
 });

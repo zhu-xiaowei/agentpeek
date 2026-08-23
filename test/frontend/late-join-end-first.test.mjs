@@ -47,6 +47,50 @@ test('end-first late join renders authority once and ignores delayed frames', as
     container.textContent.split('ordered answer').length - 1,
     1,
   );
-  assert.equal(container.querySelector(`[data-turn-id="${turnId}"]`), null);
+  const recoveredTurn = container.querySelector(`[data-turn-id="${turnId}"]`);
+  assert.ok(recoveredTurn);
+  assert.equal(recoveredTurn.classList.contains('stream-preview'), false);
   assert.equal(h.hooks.flushLateJoinCompletion(turnId), false);
+
+  const gappedSessionId = 'claude:gapped-end';
+  const gappedTurnId = 'turn-gapped-end';
+  resetSession(h, { sessionId: gappedSessionId });
+  const gappedEvent = (seq, action, extra = {}) => ({
+    action,
+    sessionId: gappedSessionId,
+    turnId: gappedTurnId,
+    seq,
+    ...extra,
+  });
+  const answer = {
+    uuid: 'gapped-answer',
+    type: 'assistant',
+    stopReason: 'end_turn',
+    content: [{ type: 'text', text: 'complete after gap' }],
+  };
+
+  for (const item of [
+    gappedEvent(0, 'stream_turn_start'),
+    gappedEvent(1, 'messages', {
+      messages: [{
+        uuid: 'gapped-user',
+        type: 'user',
+        content: 'question',
+      }],
+    }),
+    gappedEvent(3, 'stream_delta', { chunk: 'partial' }),
+    gappedEvent(6, 'messages', { messages: [answer] }),
+    gappedEvent(7, 'stream_end', { messages: [answer] }),
+  ]) {
+    h.hooks.handleWsMessage(item);
+  }
+  await h.tick(80);
+
+  assert.equal(
+    h.document.body.textContent.split('complete after gap').length - 1,
+    1,
+  );
+  assert.equal(h.document.body.textContent.includes('partial'), false);
+  assert.equal(h.state.wsRunning, false);
+  h.window.close();
 });

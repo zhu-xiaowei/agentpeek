@@ -60,6 +60,7 @@ import {
   CommandCatalogCache,
   commandCatalogPayload,
 } from './command-catalog-cache.mjs';
+import { ClientTurnOrder } from './client-turn-order.mjs';
 
 let _ws = null;
 let _config = null;
@@ -79,6 +80,10 @@ const _pool = new ClaudePool({ onExit: (sessionId) => syncPoolStatus(sessionId, 
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
 const _commandCatalogCache = new CommandCatalogCache();
+const _clientTurnOrder = new ClientTurnOrder();
+const _clientTurnsInFlight = new Set();
+const _clientTurnAcks = new Map();
+const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 
 // Idle pooled processes do not block terminal-driven status updates.
@@ -393,6 +398,15 @@ export function initWs(config) {
 
 export function wsSend(data) {
   assertTurnEventEnvelope(data);
+  if (data?.action === 'send_message_result'
+    && data.turnId && !data.queued
+    && data.errorCode !== 'previous_turn_missing') {
+    _clientTurnAcks.delete(data.turnId);
+    _clientTurnAcks.set(data.turnId, { ...data });
+    while (_clientTurnAcks.size > CLIENT_TURN_ACK_LIMIT) {
+      _clientTurnAcks.delete(_clientTurnAcks.keys().next().value);
+    }
+  }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return false;
   try {
     _ws.send(JSON.stringify(data));
@@ -531,18 +545,49 @@ async function handleMessage(msg) {
       await handleSyncSession(msg.sessionId, msg.runtime, msg.nativeSessionId);
       break;
     case 'send_message':
-      await handleSendMessage(
-        msg.sessionId,
-        msg.text,
-        msg.projectHash,
-        msg.requestId,
-        msg.asAgent,
-        msg.turnId,
-        msg.runtime,
-        msg.takeover,
-        msg.expectedWriterPid,
-        msg.replyConnectionId,
-      );
+      if (_clientTurnAcks.has(msg.turnId)) {
+        wsSend({
+          ..._clientTurnAcks.get(msg.turnId),
+          ...(msg.replyConnectionId
+            ? { replyConnectionId: msg.replyConnectionId }
+            : {}),
+        });
+        break;
+      }
+      if (_clientTurnsInFlight.has(msg.turnId)) {
+        break;
+      }
+      _clientTurnsInFlight.add(msg.turnId);
+      try {
+        await _clientTurnOrder.run(msg, () => handleSendMessage(
+          msg.sessionId,
+          msg.text,
+          msg.projectHash,
+          msg.requestId,
+          msg.asAgent,
+          msg.turnId,
+          msg.runtime,
+          msg.takeover,
+          msg.expectedWriterPid,
+          msg.replyConnectionId,
+        ));
+      } catch (error) {
+        if (error?.code !== 'previous_turn_missing') throw error;
+        wsSend({
+          action: 'send_message_result',
+          sessionId: msg.sessionId,
+          requestId: msg.requestId,
+          turnId: msg.turnId,
+          ok: false,
+          error: 'Previous message did not reach the Bridge. Retry.',
+          errorCode: error.code,
+          ...(msg.replyConnectionId
+            ? { replyConnectionId: msg.replyConnectionId }
+            : {}),
+        });
+      } finally {
+        _clientTurnsInFlight.delete(msg.turnId);
+      }
       break;
     case 'permission_reply':
       handlePermissionReply(msg);
@@ -558,6 +603,10 @@ async function handleMessage(msg) {
         const identity = parseStorageSessionId(msg.sessionId, msg.runtime);
         const adapter = getRuntimeAdapter(identity.runtime);
         if (adapter.features.interrupt) {
+          if (msg.turnId) {
+            _activeTurns.get(identity.sessionId, msg.turnId)
+              ?.sendInterrupt();
+          }
           await (adapter.interaction?.interrupt
             ? adapter.interaction.interrupt(identity.nativeSessionId)
             : _pool.interrupt(identity.nativeSessionId));
@@ -967,6 +1016,9 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
     });
   };
   try {
+    if (identity.runtime === 'codex') {
+      syncInteractionStatus(identity.sessionId, 'running', '', 'codex');
+    }
     callbacks = createStreamCallbacks(
       identity.sessionId,
       liveTurnId,
@@ -975,7 +1027,7 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
       {
         runtime: identity.runtime,
         nativeSessionId: identity.nativeSessionId,
-        syncStatus: false,
+        syncStatus: identity.runtime === 'codex',
         userInitiated: true,
         replyConnectionId: sendOptions.replyConnectionId,
         ...(identity.runtime === 'claude' ? { userText: text } : {}),

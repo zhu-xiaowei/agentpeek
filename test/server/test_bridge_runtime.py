@@ -1189,9 +1189,18 @@ def test_new_session_send_carries_the_origin_connection_to_the_bridge(monkeypatc
     )
 
     assert response == {"statusCode": 200}
-    assert sent == [(
-        "bridge-1",
-        {
+    assert sent == [
+        (
+            "app-1",
+            {
+                "action": "send_message_received",
+                "requestId": "request-1",
+                "turnId": "turn-1",
+            },
+        ),
+        (
+            "bridge-1",
+            {
             "action": "send_message",
             "projectHash": "-repo",
             "requestId": "request-1",
@@ -1199,8 +1208,33 @@ def test_new_session_send_carries_the_origin_connection_to_the_bridge(monkeypatc
             "text": "hello",
             "runtime": "codex",
             "replyConnectionId": "app-1",
+            },
+        ),
+    ]
+
+    sent.clear()
+    monkeypatch.setattr(bridge_ws, "_query_connections", lambda *_: [])
+    response = bridge_ws._handle_message(
+        {
+            "body": json.dumps({
+                "action": "send_message",
+                "projectHash": "-repo",
+                "requestId": "request-2",
+                "turnId": "turn-2",
+                "text": "retry later",
+                "runtime": "codex",
+            }),
         },
-    )]
+        "app-1",
+        "https://example.test/v1",
+    )
+
+    assert response == {"statusCode": 200}
+    assert [message["action"] for _, message in sent] == [
+        "send_message_received",
+        "send_message_result",
+    ]
+    assert sent[-1][1]["errorCode"] == "bridge_offline"
 
 
 def test_new_session_result_subscribes_origin_before_reply(monkeypatch):

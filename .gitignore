@@ -34,6 +34,7 @@ __pycache__/
 # Test cache and local test credentials
 .pytest_cache/
 /test/**/.env
+/.test-runs/
 
 # IDE
 .idea/

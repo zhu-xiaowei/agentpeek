@@ -38,14 +38,26 @@ test('foreground and unexpected reconnects share recovery while navigation start
   globalThis.showWsBanner = h.window.showWsBanner = function () {};
 
   let oldClosed = 0;
+  const existingSent = [];
   h.state.ws = {
     readyState: FakeWebSocket.OPEN,
     onclose() {},
+    send(payload) { existingSent.push(JSON.parse(payload)); },
     close() { oldClosed++; },
   };
 
   assert.equal(h.window.resumeSessionForeground(), true);
+  assert.equal(oldClosed, 0);
+  assert.equal(sockets.length, 0);
+  assert.deepEqual(
+    existingSent.slice(0, 2).map((message) => message.action),
+    ['subscribe', 'reveal_permission'],
+  );
+
+  h.window.disconnectWs();
   assert.equal(oldClosed, 1);
+  h.state.appState.session = 'codex:foreground-ws';
+  h.window.startWs('codex:foreground-ws');
   assert.equal(sockets.length, 1);
   assert.equal(h.state.ws, sockets[0]);
 
@@ -65,6 +77,7 @@ test('foreground and unexpected reconnects share recovery while navigation start
     }
     return realSetTimeout(callback, delay, ...args);
   };
+  sockets[0].readyState = FakeWebSocket.CLOSED;
   sockets[0].onclose();
   globalThis.setTimeout = realSetTimeout;
   assert.ok(scheduledReconnect);
