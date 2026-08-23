@@ -149,6 +149,29 @@ function removeInsideRoot(target, root) {
   }
 }
 
+export function removeClaudeSessionHistoryFiles(
+  filePath,
+  nativeSessionId,
+  context = {},
+) {
+  const projectsRoot = context.projectsRoot || CLAUDE_PROJECTS;
+  const sessionDir = filePath.endsWith('.jsonl')
+    ? filePath.slice(0, -'.jsonl'.length)
+    : '';
+  const fileDeleted = removeInsideRoot(filePath, projectsRoot);
+  const childrenDeleted = !sessionDir
+    || removeInsideRoot(sessionDir, projectsRoot);
+  if (fileDeleted && childrenDeleted && context.watermarks) {
+    const childPrefix = `${nativeSessionId}:subagent:`;
+    for (const sessionId of Array.from(context.watermarks.keys())) {
+      if (sessionId === nativeSessionId || sessionId.startsWith(childPrefix)) {
+        context.watermarks.delete(sessionId);
+      }
+    }
+  }
+  return fileDeleted && childrenDeleted;
+}
+
 export const claudeRuntime = defineRuntimeAdapter({
   runtime: 'claude',
   displayName: 'Claude',
@@ -199,9 +222,7 @@ export const claudeRuntime = defineRuntimeAdapter({
     if (parseClaudeSubagentSessionId(nativeSessionId)) return false;
     const filePath = findClaudeSessionFile(nativeSessionId);
     if (!filePath) return false;
-    const deleted = removeInsideRoot(filePath, CLAUDE_PROJECTS);
-    if (deleted) context.watermarks?.delete(nativeSessionId);
-    return deleted;
+    return removeClaudeSessionHistoryFiles(filePath, nativeSessionId, context);
   },
 
   deleteProjectHistory(projectHash) {

@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   claudeRuntime,
   discoverClaudeSessions,
+  removeClaudeSessionHistoryFiles,
 } from '../../bridge/claude-runtime.mjs';
 import { ClaudePool } from '../../bridge/headless.mjs';
 import {
@@ -230,6 +231,64 @@ test('startup discovery does not resurrect needs_input after headless takeover',
     assert.equal(catalog.sessions[0].status, 'completed');
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('deleting standalone Claude history removes only that session file', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-delete-single-'));
+  const projectDir = path.join(root, '-repo');
+  const sessionId = '12121212-1212-4212-8212-121212121212';
+  const otherId = '13131313-1313-4313-8313-131313131313';
+  const filePath = path.join(projectDir, `${sessionId}.jsonl`);
+  const otherPath = path.join(projectDir, `${otherId}.jsonl`);
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(filePath, '{}\n');
+  fs.writeFileSync(otherPath, '{}\n');
+  const watermarks = new Map([[sessionId, 1], [otherId, 1]]);
+  try {
+    assert.equal(removeClaudeSessionHistoryFiles(filePath, sessionId, {
+      projectsRoot: root,
+      watermarks,
+    }), true);
+    assert.equal(fs.existsSync(filePath), false);
+    assert.equal(fs.existsSync(otherPath), true);
+    assert.equal(watermarks.has(sessionId), false);
+    assert.equal(watermarks.has(otherId), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('deleting Claude root history removes all nested subagent files', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-delete-agents-'));
+  const projectDir = path.join(root, '-repo');
+  const sessionId = '14141414-1414-4414-8414-141414141414';
+  const filePath = path.join(projectDir, `${sessionId}.jsonl`);
+  const sessionDir = path.join(projectDir, sessionId);
+  const childPath = path.join(sessionDir, 'subagents', 'agent-child.jsonl');
+  const nestedPath = path.join(sessionDir, 'subagents', 'nested', 'agent-grandchild.jsonl');
+  fs.mkdirSync(path.dirname(nestedPath), { recursive: true });
+  fs.writeFileSync(filePath, '{}\n');
+  fs.writeFileSync(childPath, '{}\n');
+  fs.writeFileSync(nestedPath, '{}\n');
+  const childId = `${sessionId}:subagent:agent-child`;
+  const grandchildId = `${sessionId}:subagent:agent-grandchild`;
+  const watermarks = new Map([
+    [sessionId, 1],
+    [childId, 1],
+    [grandchildId, 1],
+    ['unrelated', 1],
+  ]);
+  try {
+    assert.equal(removeClaudeSessionHistoryFiles(filePath, sessionId, {
+      projectsRoot: root,
+      watermarks,
+    }), true);
+    assert.equal(fs.existsSync(filePath), false);
+    assert.equal(fs.existsSync(sessionDir), false);
+    assert.deepEqual([...watermarks.keys()], ['unrelated']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

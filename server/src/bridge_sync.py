@@ -705,6 +705,33 @@ class DeleteRequest(BaseModel):
     projectHashes: List[str] = []  # delete a project = its PROJ# + all its SESS# rows
 
 
+def _collect_session_tree_sks(rows, session_ids):
+    """Return the requested sessions' SESS# keys plus every nested descendant."""
+    sks_by_session = {}
+    children_by_parent = {}
+    for row in rows:
+        session_id = row.get("sessionId", "")
+        if not session_id:
+            continue
+        if row.get("sk"):
+            sks_by_session.setdefault(session_id, set()).add(row["sk"])
+        parent_id = row.get("parentSessionId", "")
+        if parent_id:
+            children_by_parent.setdefault(parent_id, set()).add(session_id)
+
+    pending = list(session_ids)
+    visited = set()
+    session_sks = set()
+    while pending:
+        session_id = pending.pop()
+        if not session_id or session_id in visited:
+            continue
+        visited.add(session_id)
+        session_sks.update(sks_by_session.get(session_id, ()))
+        pending.extend(children_by_parent.get(session_id, ()))
+    return session_sks
+
+
 @bridge_router.post("/delete")
 async def delete_sessions(req: DeleteRequest, raw: Request):
     """Delete sessions/projects from DDB (SESS#/PROJ# rows only), then reconcile the
@@ -724,13 +751,15 @@ async def delete_sessions(req: DeleteRequest, raw: Request):
                              & Key("sk").begins_with(f"SESS#{dev}#{ph}#"), ProjectionExpression="sk"):
             sess_sks.add(it["sk"])
 
-    # Resolve explicit sessionIds to their SESS# sk (query by device; filter by id).
+    # Resolve explicit sessionIds and every nested child from one device-wide query.
     if req.sessionIds:
-        want = set(req.sessionIds)
-        for it in _query_all(sessions_table, KeyConditionExpression=Key("accountId").eq(key_hash)
-                             & Key("sk").begins_with(f"SESS#{dev}#"), ProjectionExpression="sk, sessionId"):
-            if it.get("sessionId") in want:
-                sess_sks.add(it["sk"])
+        rows = _query_all(
+            sessions_table,
+            KeyConditionExpression=Key("accountId").eq(key_hash)
+            & Key("sk").begins_with(f"SESS#{dev}#"),
+            ProjectionExpression="sk, sessionId, parentSessionId",
+        )
+        sess_sks.update(_collect_session_tree_sks(rows, req.sessionIds))
 
     with sessions_table.batch_writer() as batch:
         for sk in sess_sks:

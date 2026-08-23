@@ -267,6 +267,75 @@ def test_sync_sessions_persists_subagent_relationship(monkeypatch):
     assert "activeStatus" not in child
 
 
+def test_collect_session_tree_sks_handles_standalone_and_nested_sessions():
+    rows = [{
+        "sk": "SESS#Linux#-repo#standalone",
+        "sessionId": "standalone",
+    }, {
+        "sk": "SESS#Linux#-repo#root",
+        "sessionId": "root",
+    }, {
+        "sk": "SESS#Linux#-repo#child-a",
+        "sessionId": "child-a",
+        "parentSessionId": "root",
+    }, {
+        "sk": "SESS#Linux#-repo#grandchild",
+        "sessionId": "grandchild",
+        "parentSessionId": "child-a",
+    }, {
+        "sk": "SESS#Linux#-repo#other",
+        "sessionId": "other",
+    }]
+
+    assert bridge_sync._collect_session_tree_sks(rows, ["standalone"]) == {
+        "SESS#Linux#-repo#standalone",
+    }
+    assert bridge_sync._collect_session_tree_sks(rows, ["root"]) == {
+        "SESS#Linux#-repo#root",
+        "SESS#Linux#-repo#child-a",
+        "SESS#Linux#-repo#grandchild",
+    }
+
+
+def test_delete_session_deletes_all_nested_children_only(monkeypatch):
+    sessions = FakeTable()
+    messages = FakeTable()
+    rows = [{
+        "sk": "SESS#Linux#-repo#root",
+        "sessionId": "root",
+    }, {
+        "sk": "SESS#Linux#-repo#child-a",
+        "sessionId": "child-a",
+        "parentSessionId": "root",
+    }, {
+        "sk": "SESS#Linux#-repo#grandchild",
+        "sessionId": "grandchild",
+        "parentSessionId": "child-a",
+    }, {
+        "sk": "SESS#Linux#-repo#other",
+        "sessionId": "other",
+    }]
+    monkeypatch.setattr(bridge_sync, "_tables", lambda: (sessions, messages))
+    monkeypatch.setattr(bridge_sync, "_query_all", lambda *_args, **_kwargs: rows)
+    monkeypatch.setattr(
+        bridge_sync,
+        "_reconcile_device",
+        lambda *_args, **_kwargs: {"sessionCount": 1, "projectCount": 1},
+    )
+
+    result = asyncio.run(bridge_sync.delete_sessions(
+        bridge_sync.DeleteRequest(deviceName="Linux", sessionIds=["root"]),
+        FakeRequest(),
+    ))
+
+    assert {item["sk"] for item in sessions.deleted} == {
+        "SESS#Linux#-repo#root",
+        "SESS#Linux#-repo#child-a",
+        "SESS#Linux#-repo#grandchild",
+    }
+    assert result["deletedSessions"] == 3
+
+
 def test_sync_sessions_persists_preserves_and_exactly_updates_agent_count(monkeypatch):
     sessions = FakeTable()
     messages = FakeTable()
