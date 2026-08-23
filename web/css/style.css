@@ -1269,7 +1269,14 @@ html.native-mobile .skeleton-messages .skeleton-user .skeleton-copy-line { min-h
 /* === Loading/Empty === */
 .loading { text-align: center; padding: 40px; color: #8b949e; }
 .empty { text-align: center; padding: 40px; color: #6e7681; }
-.loading-more { height: 44px; display: flex; align-items: center; justify-content: center; color: #8b949e; }
+.loading-more {
+  height: 44px;
+  margin-bottom: clamp(8px, var(--sab, env(safe-area-inset-bottom, 0px)), 17px);
+  display: flex; align-items: center; justify-content: center; color: #8b949e;
+}
+#content.list-loading .list {
+  padding-bottom: clamp(8px, var(--sab, env(safe-area-inset-bottom, 0px)), 17px);
+}
 .loading-more .spinner { width: 16px; height: 16px; border: 2px solid rgba(139,148,158,0.35); border-top-color: #8b949e; border-radius: 50%; animation: spin 0.6s linear infinite; }
 .loading-older { text-align: center; padding: 12px; color: #8b949e; font-size: 13px; }
 .loading-older.exhausted { display: none; }

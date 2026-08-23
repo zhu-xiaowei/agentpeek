@@ -84,7 +84,7 @@ function setFileViewMode(mode) {
     return;
   }
   var token = ++_previewToken;
-  setBody('<div class="file-loading"><div class="spinner"></div><span>Loading preview…</span></div>');
+  setBody('<div class="file-loading" role="status" aria-label="Loading preview"><div class="spinner"></div></div>');
   buildPreviewHtml(_current.text, _current.path).then(function (html) {
     if (token === _previewToken) showPreview(html);
   });
@@ -191,7 +191,7 @@ function openFile(absPath, displayName, lineHint, matchId) {
   titleEl.title = absPath;
   _current = null;
   showTabs(false);
-  setBody('<div class="file-loading"><div class="spinner"></div><span>Loading file…</span></div>');
+  setBody('<div class="file-loading" role="status" aria-label="Loading file"><div class="spinner"></div></div>');
   o.style.display = 'flex';
   _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
@@ -353,7 +353,7 @@ function handleFileProgress(msg) {
   if (!p || p.requestId !== msg.requestId) return;
   clearTimeout(p.timer);
   p.timer = null;
-  if (msg.video) setBody('<div class="file-loading"><div class="spinner"></div><span>Uploading video…</span></div>');
+  if (msg.video) setBody('<div class="file-loading" role="status" aria-label="Uploading video"><div class="spinner"></div></div>');
 }
 
 document.addEventListener('keydown', function (e) {

@@ -881,6 +881,7 @@ function renderListEntry(options, entry, scrollTop, anchor) {
 
 function setListLoading(loading) {
   var content = document.getElementById('content');
+  content.classList.toggle('list-loading', loading);
   var existing = content.querySelector('.loading-more');
   if (!loading) {
     if (existing) existing.remove();
