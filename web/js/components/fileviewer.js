@@ -1,5 +1,6 @@
 // Click-to-sync project file viewer: request_file → file_ready → GET /file/{key} → highlight.
 import { state } from '../state.js';
+import { registerEdgeBackLayer } from '../edge-back.js';
 
 var HIGHLIGHT_MAX = 256 * 1024;
 var FILE_REQ_TIMEOUT = 20000;
@@ -10,6 +11,11 @@ function esc(s) {
 
 var _current = null; // { path, text, truncated, line, snippet }
 var _previewToken = 0; // guards against stale preview results overwriting the view
+var _edgeBack = registerEdgeBackLayer({
+  navigateBack: closeFileViewer,
+  foregroundSelectors: ['#fileOverlay'],
+  guardZIndex: 1001,
+});
 
 // Concurrent async file fetches (used by HTML preview to pull referenced assets).
 var _asyncReqs = new Map(); // requestId → { resolve }
@@ -149,6 +155,7 @@ function buildPreviewHtml(html, basePath) {
 }
 
 function closeFileViewer() {
+  _edgeBack.deactivate();
   var o = overlay();
   if (o) o.style.display = 'none';
   _current = null;
@@ -186,6 +193,7 @@ function openFile(absPath, displayName, lineHint, matchId) {
   showTabs(false);
   setBody('<div class="file-loading"><div class="spinner"></div><span>Loading file…</span></div>');
   o.style.display = 'flex';
+  _edgeBack.activate();
   if (window.attachScrollIndicator) window.attachScrollIndicator(document.getElementById('fileOverlayBody'));
   sendFileRequest(absPath, lineHint || '', matchId ? snippetForTool(matchId) : '', 1);
 }

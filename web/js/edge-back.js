@@ -7,6 +7,54 @@ var renderedState = window.__inlineRendered
 var navigationStack = [];
 var restoringNavigation = false;
 var PAGE_PREVIEW_KEY = 'baton-page-preview';
+var edgeBackLayers = [];
+var edgeGuardRefreshers = [];
+
+function activeEdgeBackLayer() {
+  for (var i = edgeBackLayers.length - 1; i >= 0; i--) {
+    if (edgeBackLayers[i].active) return edgeBackLayers[i];
+  }
+  return null;
+}
+
+function refreshEdgeGuards() {
+  var layer = activeEdgeBackLayer();
+  edgeGuardRefreshers.forEach(function (refresh) { refresh(layer); });
+}
+
+// Full-screen surfaces can reuse the same native edge-back gesture without
+// duplicating pointer logic. The most recently activated layer wins.
+export function registerEdgeBackLayer(options) {
+  options = options || {};
+  var layer = {
+    active: false,
+    navigateBack: options.navigateBack,
+    foregroundSelectors: options.foregroundSelectors || [],
+    guardZIndex: options.guardZIndex || 1001,
+  };
+  edgeBackLayers.push(layer);
+  return {
+    activate: function () {
+      layer.active = true;
+      var index = edgeBackLayers.indexOf(layer);
+      if (index >= 0) {
+        edgeBackLayers.splice(index, 1);
+        edgeBackLayers.push(layer);
+      }
+      refreshEdgeGuards();
+    },
+    deactivate: function () {
+      layer.active = false;
+      refreshEdgeGuards();
+    },
+    unregister: function () {
+      var index = edgeBackLayers.indexOf(layer);
+      if (index >= 0) edgeBackLayers.splice(index, 1);
+      refreshEdgeGuards();
+    },
+  };
+}
+window.registerEdgeBackLayer = registerEdgeBackLayer;
 
 function routeKey(appState) {
   if (!appState.device) return 'devices';
@@ -163,6 +211,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   var foreground = [];
   var settleTimer = null;
   var edgeGuard = null;
+  var gestureLayer = null;
 
   function hasOpenOverlay() {
     var overlays = document.querySelectorAll('.modal-overlay, .mermaid-fs-overlay, .file-overlay, .img-overlay');
@@ -207,9 +256,9 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     document.body.style.setProperty('--edge-back-x', px + 'px');
   }
 
-  function beginSwipe(snapshot, dx) {
-    underlay = makeUnderlay(snapshot);
-    var selectors = options.foregroundSelectors || [
+  function beginSwipe(snapshot, dx, selectors) {
+    if (snapshot) underlay = makeUnderlay(snapshot);
+    selectors = selectors || options.foregroundSelectors || [
       'body > .top-bar',
       '#breadcrumb',
       '#content',
@@ -243,6 +292,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
     document.body.classList.remove('edge-back-active', 'edge-back-settling');
     document.body.style.removeProperty('--edge-back-x');
     settling = false;
+    gestureLayer = null;
   }
 
   function settleSwipe(complete) {
@@ -253,8 +303,12 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
 
     settleTimer = setTimeout(function () {
       if (complete) {
-        navigateUp();
-        if (!pageMode) {
+        if (gestureLayer && typeof gestureLayer.navigateBack === 'function') {
+          gestureLayer.navigateBack();
+        } else {
+          navigateUp();
+        }
+        if (gestureLayer || !pageMode) {
           requestAnimationFrame(function () {
             requestAnimationFrame(cleanupSwipe);
           });
@@ -266,12 +320,14 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   }
 
   document.addEventListener('pointerdown', function (e) {
-    if (settling || e.pointerType === 'mouse' || e.clientX > 24 || hasOpenOverlay()) return;
+    gestureLayer = activeEdgeBackLayer();
+    if (settling || e.pointerType === 'mouse' || e.clientX > 24) return;
+    if (!gestureLayer && hasOpenOverlay()) return;
     if (e.target !== edgeGuard) return;
-    if (!pageMode && !state.selectMode && !state.appState.device) return;
+    if (!gestureLayer && !pageMode && !state.selectMode && !state.appState.device) return;
     tracking = true;
     claimed = false;
-    selectionOnly = !pageMode && state.selectMode;
+    selectionOnly = !gestureLayer && !pageMode && state.selectMode;
     hierarchyOnly = false;
     startX = e.clientX;
     startY = e.clientY;
@@ -289,16 +345,21 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
       return;
     }
     if (!claimed && dx > 10 && dx >= Math.abs(dy)) {
-      var previous = navigationStack[navigationStack.length - 1];
-      var snapshot = !selectionOnly && previous && previous.snapshot;
-      if (!selectionOnly && !snapshot) {
-        if (typeof preparePrevious === 'function') {
-          snapshot = preparePrevious(previous ? cloneNavState(previous.state) : null);
+      if (gestureLayer) {
+        claimed = true;
+        beginSwipe(null, dx, gestureLayer.foregroundSelectors);
+      } else {
+        var previous = navigationStack[navigationStack.length - 1];
+        var snapshot = !selectionOnly && previous && previous.snapshot;
+        if (!selectionOnly && !snapshot) {
+          if (typeof preparePrevious === 'function') {
+            snapshot = preparePrevious(previous ? cloneNavState(previous.state) : null);
+          }
+          hierarchyOnly = !snapshot;
         }
-        hierarchyOnly = !snapshot;
+        claimed = true;
+        if (snapshot) beginSwipe(snapshot, dx);
       }
-      claimed = true;
-      if (snapshot) beginSwipe(snapshot, dx);
     }
     if (!claimed) return;
 
@@ -347,6 +408,11 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   edgeGuard = document.createElement('div');
   edgeGuard.className = 'edge-back-guard';
   document.body.appendChild(edgeGuard);
+  var refreshGuard = function (layer) {
+    edgeGuard.style.zIndex = layer ? String(layer.guardZIndex) : '';
+  };
+  edgeGuardRefreshers.push(refreshGuard);
+  refreshGuard(activeEdgeBackLayer());
 }
 
 export function attachPageEdgeBackGesture(navigateBack, foregroundSelectors) {

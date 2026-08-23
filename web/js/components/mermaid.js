@@ -246,6 +246,13 @@
   // CSS transforms can promote the whole SVG to a cached WebKit bitmap. Updating viewBox
   // keeps every frame vector-rendered while still supporting anchored pinch/wheel zoom.
   var _fs = null;
+  var _fsEdgeBack = window.registerEdgeBackLayer
+    ? window.registerEdgeBackLayer({
+        navigateBack: closeMermaidFullscreen,
+        foregroundSelectors: ['.mermaid-fs-overlay'],
+        guardZIndex: 2002,
+      })
+    : { activate: function () {}, deactivate: function () {} };
   var FS_MIN_SCALE = 0.5;
   var FS_MAX_SCALE = 8;
 
@@ -474,6 +481,7 @@
   }
 
   function closeMermaidFullscreen() {
+    _fsEdgeBack.deactivate();
     if (!_fs) return;
     fsCancelSpring();
     if (_fs.detach) _fs.detach();
@@ -500,6 +508,7 @@
       + '</button>'
       + '<div class="mermaid-fs-stage">' + svgHtml + '</div>';
     document.body.appendChild(overlay);
+    _fsEdgeBack.activate();
 
     var stage = overlay.querySelector('.mermaid-fs-stage');
     var fullSvg = stage.querySelector('svg');
