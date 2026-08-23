@@ -102,6 +102,94 @@ test('sending a user message restores bottom following with a smooth scroll', ()
   assert.match(h.document.querySelector('.msg-user[data-pending="1"]').textContent, /hello/);
 });
 
+test('typing preserves message scroll without refreshing the streaming spinner', async (t) => {
+  resetSession(h, { sessionId: 'codex:typing-stability' });
+  const content = h.document.getElementById('content');
+  const input = h.document.getElementById('msg-input');
+  const originalSpinner = h.window.updateSpinner;
+  let spinnerUpdates = 0;
+  globalThis.updateSpinner = h.window.updateSpinner = () => { spinnerUpdates += 1; };
+
+  let clientHeight = 300;
+  let scrollHeight = 900;
+  let scrollTop = 180;
+  Object.defineProperties(content, {
+    clientHeight: { configurable: true, get: () => clientHeight },
+    scrollHeight: { configurable: true, get: () => scrollHeight },
+    scrollTop: {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => { scrollTop = Math.min(value, scrollHeight - clientHeight); },
+    },
+  });
+  Object.defineProperty(input, 'scrollHeight', {
+    configurable: true,
+    get: () => 44,
+  });
+  t.after(() => {
+    globalThis.updateSpinner = h.window.updateSpinner = originalSpinner;
+    delete content.clientHeight;
+    delete content.scrollHeight;
+    delete content.scrollTop;
+    delete input.scrollHeight;
+  });
+
+  h.state.wsRunning = true;
+  h.state.stickBottom = false;
+  input.value = 'a';
+  input.dispatchEvent(new h.window.Event('input'));
+  await h.tick(10);
+
+  assert.equal(input.style.height, '44px');
+  assert.equal(content.scrollTop, 180);
+  assert.equal(spinnerUpdates, 0);
+
+  scrollTop = 600;
+  h.state.stickBottom = true;
+  input.value = 'ab';
+  input.dispatchEvent(new h.window.Event('input'));
+  await h.tick(10);
+
+  assert.equal(content.scrollTop, 600);
+  assert.equal(spinnerUpdates, 0);
+});
+
+test('first outside tap dismisses the keyboard without activating expandable content', async () => {
+  resetSession(h, { sessionId: 'codex:keyboard-tap-guard' });
+  const input = h.document.getElementById('msg-input');
+  const target = h.document.createElement('div');
+  target.className = 'tool-value clamp';
+  h.document.getElementById('content').appendChild(target);
+  let activations = 0;
+  target.addEventListener('click', () => { activations += 1; });
+  h.state.stickBottom = true;
+
+  input.focus();
+  h.visualViewport.height = 420;
+  h.visualViewport.offsetTop = 40;
+  h.visualViewport.dispatch('resize');
+  await h.tick(10);
+
+  const dispatch = (type) => {
+    const event = new h.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'pointerId', { value: 1 });
+    target.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(dispatch('pointerdown').defaultPrevented, true);
+  assert.equal(dispatch('pointerup').defaultPrevented, true);
+  assert.equal(dispatch('click').defaultPrevented, true);
+
+  assert.notEqual(h.document.activeElement, input);
+  assert.equal(activations, 0);
+  assert.equal(h.state.stickBottom, true);
+
+  dispatch('pointerdown');
+  dispatch('pointerup');
+  dispatch('click');
+  assert.equal(activations, 1);
+});
+
 test('an OUT update on an earlier tool still keeps the whole view at the bottom', async () => {
   resetSession(h, { sessionId: 'codex:out-follow' });
   const content = h.document.getElementById('content');

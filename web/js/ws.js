@@ -11,6 +11,7 @@ var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : windo
 var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.height : 0;
 var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
+var _mobileKeyboardOpen = false;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
@@ -49,6 +50,7 @@ if (window.visualViewport && _isMobile) {
 
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
     var kbUp = vv.height < _vpBaseHeight * 0.75;
+    _mobileKeyboardOpen = kbUp;
     var chromeHeight = 0;
     if (_isIOS && kbUp) {
       var topBar = document.querySelector('.top-bar');
@@ -80,6 +82,52 @@ if (window.visualViewport && _isMobile) {
   window.visualViewport.addEventListener('resize', syncMobileViewport);
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   syncMobileViewport();
+}
+
+// Match React Native's keyboardShouldPersistTaps="never": while the message
+// keyboard is open, the first tap outside the input bar only dismisses it.
+// Consume the whole pointer/click sequence so expandable IN/OUT content does
+// not also toggle and disturb streaming bottom-follow.
+if (_isMobile) {
+  var _dismissKeyboardTap = false;
+  var _dismissKeyboardTimer = null;
+  var clearDismissKeyboardTap = function () {
+    _dismissKeyboardTap = false;
+    clearTimeout(_dismissKeyboardTimer);
+    _dismissKeyboardTimer = null;
+  };
+  var consumeDismissKeyboardEvent = function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  };
+
+  document.addEventListener('pointerdown', function (event) {
+    var input = document.getElementById('msg-input');
+    if (!input
+      || !_mobileKeyboardOpen
+      || document.activeElement !== input
+      || event.target.closest?.('#input-bar')) {
+      return;
+    }
+    _dismissKeyboardTap = true;
+    input.blur();
+    consumeDismissKeyboardEvent(event);
+    clearTimeout(_dismissKeyboardTimer);
+    _dismissKeyboardTimer = setTimeout(clearDismissKeyboardTap, 500);
+  }, true);
+
+  document.addEventListener('pointerup', function (event) {
+    if (_dismissKeyboardTap) consumeDismissKeyboardEvent(event);
+  }, true);
+
+  document.addEventListener('click', function (event) {
+    if (!_dismissKeyboardTap) return;
+    consumeDismissKeyboardEvent(event);
+    clearDismissKeyboardTap();
+  }, true);
+
+  document.addEventListener('pointercancel', clearDismissKeyboardTap, true);
 }
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN — kept in sync with bridge/session.mjs.
@@ -1985,7 +2033,8 @@ function handleCodexClientCommand(text, input) {
 // Textarea: Enter sends, Shift+Enter newline, auto-grow, toggle send/stop button
 var _stopSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="4" y="4" width="16" height="16" rx="3" fill="currentColor"/></svg>';
 var _sendSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>';
-function updateSendBtn() {
+function updateSendBtn(options) {
+  options = options || {};
   var btn = document.getElementById('send-btn');
   var textLen = document.getElementById('msg-input').value.trim().length;
   var agentCb = document.getElementById('newAsAgent');
@@ -2000,7 +2049,7 @@ function updateSendBtn() {
   if (btn.dataset.icon !== icon) { btn.innerHTML = icon === 'stop' ? _stopSvg : _sendSvg; btn.dataset.icon = icon; }
   if (btn.className !== cls) btn.className = cls;
   btn.disabled = !state.activeThreadCanSend || (!hasText && !state.wsRunning);
-  if (typeof updateSpinner === 'function') updateSpinner();
+  if (!options.skipSpinner && typeof updateSpinner === 'function') updateSpinner();
   if (typeof updateMicButton === 'function') updateMicButton();
 }
 function onSendBtnClick() {
@@ -2061,6 +2110,33 @@ function interruptSession() {
 }
 (function () {
   var el = document.getElementById('msg-input');
+  var restoreScrollFrame = null;
+  function resizeInputPreservingMessages() {
+    var content = document.getElementById('content');
+    var preserveScroll = content
+      && state.appState.session
+      && state.appState.session !== '__new__';
+    var previousScrollTop = preserveScroll ? content.scrollTop : 0;
+    var followBottom = preserveScroll && (
+      state.stickBottom
+      || content.scrollHeight - content.scrollTop - content.clientHeight < 100
+    );
+
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+
+    if (!preserveScroll) return;
+    var restoreScroll = function () {
+      content.scrollTop = followBottom ? content.scrollHeight : previousScrollTop;
+    };
+    restoreScroll();
+    if (restoreScrollFrame !== null) cancelAnimationFrame(restoreScrollFrame);
+    restoreScrollFrame = requestAnimationFrame(function () {
+      restoreScrollFrame = null;
+      restoreScroll();
+    });
+  }
+
   el.addEventListener('keydown', function (e) {
     // IME composition: Enter confirms the candidate, not a send. Sending here
     // clears the input, then compositionend re-fills it → duplicate send + leftover text.
@@ -2068,9 +2144,10 @@ function interruptSession() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
   });
   el.addEventListener('input', function () {
-    el.style.height = 'auto';
-    el.style.height = el.scrollHeight + 'px';
-    updateSendBtn();
+    resizeInputPreservingMessages();
+    // Typing changes only input controls. Runtime state changes update the
+    // spinner through the existing no-argument updateSendBtn() calls.
+    updateSendBtn({ skipSpinner: true });
   });
 })();
 // Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
