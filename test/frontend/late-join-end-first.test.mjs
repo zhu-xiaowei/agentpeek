@@ -54,7 +54,12 @@ test('end-first late join renders authority once and ignores delayed frames', as
 
   const gappedSessionId = 'claude:gapped-end';
   const gappedTurnId = 'turn-gapped-end';
+  let recoveryRequests = 0;
   resetSession(h, { sessionId: gappedSessionId });
+  h.setApiHandler(async () => {
+    recoveryRequests++;
+    return { messages: [], hasMore: false, status: 'completed' };
+  });
   const gappedEvent = (seq, action, extra = {}) => ({
     action,
     sessionId: gappedSessionId,
@@ -84,7 +89,7 @@ test('end-first late join renders authority once and ignores delayed frames', as
   ]) {
     h.hooks.handleWsMessage(item);
   }
-  await h.tick(80);
+  await h.tick(250);
 
   assert.equal(
     h.document.body.textContent.split('complete after gap').length - 1,
@@ -92,5 +97,6 @@ test('end-first late join renders authority once and ignores delayed frames', as
   );
   assert.equal(h.document.body.textContent.includes('partial'), false);
   assert.equal(h.state.wsRunning, false);
+  assert.equal(recoveryRequests, 0);
   h.window.close();
 });

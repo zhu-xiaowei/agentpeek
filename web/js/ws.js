@@ -607,7 +607,9 @@ function handleGappedTurnCompletion(completion) {
   mergeLateJoinAuthority(completion, true, true);
   _appliedLifecycleVersion++;
   updateSendBtn();
-  scheduleTurnEndRecovery(completion.sessionId);
+  if (turnCompletionNeedsRecovery(completion)) {
+    scheduleTurnEndRecovery(completion.sessionId);
+  }
   return true;
 }
 
@@ -1098,9 +1100,13 @@ function handleLateJoinCompletion(completion) {
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
-  if (!completion.messages?.length || completion.end?.recoveryRequired) {
+  if (turnCompletionNeedsRecovery(completion)) {
     scheduleTurnEndRecovery(completion.sessionId);
   }
+}
+
+function turnCompletionNeedsRecovery(completion) {
+  return !completion.messages?.length || completion.end?.recoveryRequired;
 }
 
 function mergeLateJoinAuthority(completion, completed, forceRender) {
