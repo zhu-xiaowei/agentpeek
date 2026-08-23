@@ -1035,7 +1035,7 @@ test('Codex task_complete errors are extracted as visible turn errors', () => {
             message: JSON.stringify({
               error: {
                 code: 'validation_error',
-                message: 'Access to OpenAI models is not allowed from this region.',
+                message: "invalid request body: Invalid 'input': value did not match any expected variant",
               },
             }),
             codex_error_info: 'other',
@@ -1051,7 +1051,7 @@ test('Codex task_complete errors are extracted as visible turn errors', () => {
     assert.equal(message.nativeId, 'codex:turn:turn-error:error');
     assert.equal(
       message.content[0].text,
-      'Error: Access to OpenAI models is not allowed from this region.',
+      "Error: invalid request body: Invalid 'input': value did not match any expected variant",
     );
     assert.equal(message.stopReason, 'end_turn');
     assert.equal(codexLiveSource(message), 'runtime-turn:turn-error');

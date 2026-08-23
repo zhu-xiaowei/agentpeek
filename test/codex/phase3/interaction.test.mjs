@@ -604,7 +604,7 @@ test('terminal Codex errors become visible assistant messages with the API detai
       message: JSON.stringify({
         error: {
           code: 'validation_error',
-          message: 'Access to OpenAI models is not allowed from this region.',
+          message: "invalid request body: Invalid 'input': value did not match any expected variant",
         },
       }),
     },
@@ -620,7 +620,7 @@ test('terminal Codex errors become visible assistant messages with the API detai
   assert.equal(cb.messages[0].message.nativeId, 'codex:turn:turn-1:error');
   assert.equal(
     cb.messages[0].message.content[0].text,
-    'Error: Access to OpenAI models is not allowed from this region.',
+    "Error: invalid request body: Invalid 'input': value did not match any expected variant",
   );
   assert.equal(cb.messages[0].message.stopReason, 'end_turn');
   assert.deepEqual(cb.results[0].result, {

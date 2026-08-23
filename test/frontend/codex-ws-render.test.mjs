@@ -204,6 +204,45 @@ function send(messages) {
   });
 }
 
+const validationErrorMessage = {
+  uuid: 'validation-error',
+  nativeId: 'codex:turn:turn-validation:error',
+  type: 'assistant',
+  content: [{
+    type: 'text',
+    text: "Error: invalid request body: Invalid 'input': value did not match any expected variant",
+  }],
+  timestamp: '2026-08-23T06:00:00.000Z',
+  stopReason: 'end_turn',
+};
+
+test('realtime Codex validation errors render as visible assistant text', () => {
+  reset();
+  send([validationErrorMessage]);
+
+  const rows = document.querySelectorAll('.assistant-text');
+  assert.equal(rows.length, 1);
+  assert.equal(
+    rows[0].textContent.trim(),
+    "Error: invalid request body: Invalid 'input': value did not match any expected variant",
+  );
+});
+
+test('historical Codex validation errors render when entering the session', () => {
+  reset();
+  document.querySelector('.messages').innerHTML = window.renderMessages(
+    [validationErrorMessage],
+    'codex',
+  );
+
+  const rows = document.querySelectorAll('.assistant-text');
+  assert.equal(rows.length, 1);
+  assert.equal(
+    rows[0].textContent.trim(),
+    "Error: invalid request body: Invalid 'input': value did not match any expected variant",
+  );
+});
+
 const tool = (uuid, id, command, timestamp) => ({
   uuid,
   type: 'assistant',
