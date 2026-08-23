@@ -1688,12 +1688,22 @@ function positionScrollBtn() {
   if (bar.offsetHeight === 0 || bar.style.display === 'none') { btn.style.bottom = ''; return; }
   btn.style.bottom = (bar.offsetHeight + 12) + 'px';
 }
+var _scrollBtnPositionTimer = 0;
+function scheduleScrollBtnPosition() {
+  positionScrollBtn();
+  requestAnimationFrame(function () {
+    requestAnimationFrame(positionScrollBtn);
+  });
+  clearTimeout(_scrollBtnPositionTimer);
+  _scrollBtnPositionTimer = setTimeout(positionScrollBtn, 420);
+}
 (function () {
   var bar = document.getElementById('input-bar');
   if (bar && window.ResizeObserver) {
     new ResizeObserver(positionScrollBtn).observe(bar);
   }
-  window.addEventListener('resize', positionScrollBtn);
+  window.addEventListener('resize', scheduleScrollBtnPosition);
+  window.addEventListener('orientationchange', scheduleScrollBtnPosition);
   positionScrollBtn();
 })();
 

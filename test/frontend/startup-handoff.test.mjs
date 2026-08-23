@@ -198,7 +198,11 @@ test('mobile agent sheet stays flush to the viewport without edge borders', () =
   );
   assert.match(
     styleSource,
-    /\.agent-threads-list \{[\s\S]*?margin-right: calc\(0px - var\(--agent-threads-scrollbar-width\) - var\(--agent-threads-scrollbar-gap\)\);[\s\S]*?padding-right: var\(--agent-threads-scrollbar-gap\);[\s\S]*?scrollbar-gutter: stable;/,
+    /\.agent-threads-list \{[\s\S]*?margin-right: calc\(0px - var\(--agent-threads-scrollbar-width\) - var\(--agent-threads-scrollbar-gap\)\);[\s\S]*?padding-right: 2px;[\s\S]*?scrollbar-gutter: stable;/,
+  );
+  assert.match(
+    styleSource,
+    /html\.native-mobile \.agent-threads-list \{[^}]*margin-right: -8px;[^}]*padding-right: 8px;[^}]*scrollbar-gutter: auto;/s,
   );
   assert.match(
     styleSource,

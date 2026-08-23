@@ -7,6 +7,7 @@ static int _baton_swizzle_attempts = 0;
 static int _baton_cancel_swizzle_attempts = 0;
 static char _baton_skeleton_installed_key;
 static char _baton_skeleton_controller_key;
+static char _baton_safe_area_script_installed_key;
 
 // Find the barcode-scanner Swift class. Its runtime name is mangled with the module
 // prefix (e.g. "tauri_plugin_barcode_scanner.BarcodeScannerPlugin"), so iterate the
@@ -216,8 +217,52 @@ static void baton_install_kb_swizzle(void) {
 // WebKit bug (Bug 306465, 254868): viewport-fit=cover doesn't extend CSS viewport
 // past safe area on some iOS versions. Workaround: negate safeAreaInsets via
 // additionalSafeAreaInsets so WebKit calculates viewport = full screen. Then inject
-// real inset values as CSS custom properties (--sat/--sab) since env() becomes 0.
+// real inset values as CSS custom properties (--sat/--sab/--sal/--sar) since
+// env() becomes 0.
 // Only applies when WKContentView height < window height (bug is present).
+static void baton_inject_safe_area(WKWebView *wv, UIEdgeInsets sa) {
+    if (!wv) return;
+
+    // Install one reload-safe bootstrap. The immediate update below stores the
+    // latest orientation's values, and future page loads restore them before
+    // first paint without accumulating one WKUserScript per rotation.
+    if (!objc_getAssociatedObject(wv, &_baton_safe_area_script_installed_key)) {
+        NSString *bootstrap =
+            @"(function(){try{"
+             "var v=localStorage.getItem('__baton_safe_area');"
+             "if(!v)return;"
+             "var a=v.split(',');"
+             "var s=document.documentElement.style;"
+             "s.setProperty('--sat',a[0]+'px');"
+             "s.setProperty('--sab',a[1]+'px');"
+             "s.setProperty('--sal',a[2]+'px');"
+             "s.setProperty('--sar',a[3]+'px');"
+             "}catch(e){}})()";
+        WKUserScript *script = [[WKUserScript alloc]
+            initWithSource:bootstrap
+            injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+            forMainFrameOnly:YES];
+        [wv.configuration.userContentController addUserScript:script];
+        objc_setAssociatedObject(
+            wv, &_baton_safe_area_script_installed_key, @YES,
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    NSString *js = [NSString stringWithFormat:
+        @"(function(){"
+         "var v='%.0f,%.0f,%.0f,%.0f';"
+         "try{localStorage.setItem('__baton_safe_area',v);}catch(e){}"
+         "var a=v.split(',');"
+         "var s=document.documentElement.style;"
+         "s.setProperty('--sat',a[0]+'px');"
+         "s.setProperty('--sab',a[1]+'px');"
+         "s.setProperty('--sal',a[2]+'px');"
+         "s.setProperty('--sar',a[3]+'px');"
+         "})()",
+        sa.top, sa.bottom, sa.left, sa.right];
+    [wv evaluateJavaScript:js completionHandler:nil];
+}
+
 static void baton_fix_viewport(void) {
 
     UIWindow *kw = nil;
@@ -239,7 +284,6 @@ static void baton_fix_viewport(void) {
     }
 
     UIEdgeInsets sa = kw.safeAreaInsets;
-    if (sa.top <= 0 && sa.bottom <= 0) return;
     // Check if bug is present: find WKWebView scrollView contentSize < window height.
     WKWebView *checkWv = nil;
     for (UIView *sub in kw.rootViewController.view.subviews) {
@@ -261,37 +305,54 @@ static void baton_fix_viewport(void) {
 
     CGFloat contentH = checkWv.scrollView.contentSize.height;
     CGFloat windowH = kw.bounds.size.height;
-    // If contentSize already matches window (viewport-fit=cover works), skip fix.
-    if (contentH >= windowH - 1) return;
+    UIEdgeInsets current = kw.rootViewController.additionalSafeAreaInsets;
+    BOOL fixAlreadyActive =
+        current.top < 0 || current.left < 0 ||
+        current.bottom < 0 || current.right < 0;
+    BOOL hasSafeArea =
+        sa.top > 0 || sa.left > 0 || sa.bottom > 0 || sa.right > 0;
 
-    // Negate safe area so WebKit viewport covers full screen.
-    kw.rootViewController.additionalSafeAreaInsets =
-        UIEdgeInsetsMake(-sa.top, -sa.left, -sa.bottom, -sa.right);
+    // Once the workaround is active, refresh all four edges on every rotation.
+    // Otherwise landscape keeps the portrait negative top/bottom values and
+    // WebKit can push the title/breadcrumb outside the visible viewport.
+    if (fixAlreadyActive || (hasSafeArea && contentH < windowH - 1)) {
+        kw.rootViewController.additionalSafeAreaInsets = hasSafeArea
+            ? UIEdgeInsetsMake(-sa.top, -sa.left, -sa.bottom, -sa.right)
+            : UIEdgeInsetsZero;
+    }
 
-    // Inject real safe area values as CSS custom properties.
-    // Use WKUserScript for reliable early injection on every page load.
-    WKWebView *wv = nil;
-    for (UIView *sub in kw.rootViewController.view.subviews) {
-        if ([sub isKindOfClass:[WKWebView class]]) { wv = (WKWebView *)sub; break; }
-    }
-    if (wv) {
-        NSString *js = [NSString stringWithFormat:
-            @"(function(){"
-             "var s=document.documentElement.style;"
-             "s.setProperty('--sat','%.0fpx');"
-             "s.setProperty('--sab','%.0fpx');"
-             "s.setProperty('--sal','%.0fpx');"
-             "s.setProperty('--sar','%.0fpx');"
-             "})()",
-            sa.top, sa.bottom, sa.left, sa.right];
-        WKUserScript *script = [[WKUserScript alloc]
-            initWithSource:js
-            injectionTime:WKUserScriptInjectionTimeAtDocumentStart
-            forMainFrameOnly:YES];
-        [wv.configuration.userContentController addUserScript:script];
-        // Also evaluate immediately for the current page.
-        [wv evaluateJavaScript:js completionHandler:nil];
-    }
+    baton_inject_safe_area(checkWv, sa);
+}
+
+static void baton_schedule_viewport_refresh(void) {
+    // UIKit posts orientation notifications before every safe-area consumer has
+    // settled. Refresh immediately and twice after layout to cover both paths.
+    baton_fix_viewport();
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
+}
+
+static void baton_install_viewport_refresh_observers(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
+        NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+        void (^refresh)(__unused NSNotification *) = ^(__unused NSNotification *note) {
+            baton_schedule_viewport_refresh();
+        };
+        [center addObserverForName:UIDeviceOrientationDidChangeNotification
+                           object:nil
+                            queue:[NSOperationQueue mainQueue]
+                       usingBlock:refresh];
+        [center addObserverForName:UIApplicationDidBecomeActiveNotification
+                           object:nil
+                            queue:[NSOperationQueue mainQueue]
+                       usingBlock:refresh];
+    });
 }
 
 // Native skeleton overlay: keep the LaunchScreen view above the app's root view
@@ -549,6 +610,7 @@ int main(int argc, char * argv[]) {
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_skeleton_overlay(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_kb_swizzle(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_scanner_cancel_swizzle(); });
+	dispatch_async(dispatch_get_main_queue(), ^{ baton_install_viewport_refresh_observers(); });
 	dispatch_async(dispatch_get_main_queue(), ^{ baton_fix_viewport(); });
 	ffi::start_app();
 	return 0;

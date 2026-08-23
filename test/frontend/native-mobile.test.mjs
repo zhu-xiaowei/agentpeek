@@ -116,6 +116,39 @@ test('short iOS browse lists reserve horizontal drags for edge-back navigation',
   );
 });
 
+test('native landscape hides navigation chrome and applies live content safe areas', () => {
+  const css = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../../web/js/app.js', import.meta.url), 'utf8');
+  const main = readFileSync(
+    new URL('../../src-tauri/gen/apple/Sources/baton/main.mm', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    css,
+    /@media \(orientation: landscape\)\s*\{[\s\S]*html\.native-mobile \.top-bar,\s*html\.native-mobile \.breadcrumb\s*\{\s*display:\s*none !important;/s,
+  );
+  assert.match(
+    css,
+    /html\.native-mobile #content,\s*html\.native-mobile \.edge-back-content\s*\{[^}]*--sat[^}]*--sal[^}]*--sar/s,
+  );
+  assert.match(
+    css,
+    /html\.native-mobile \.file-modal-body\s*\{[^}]*--sat[^}]*--sal[^}]*--sar[^}]*--sab/s,
+  );
+  assert.match(
+    css,
+    /html\.native-mobile \.scroll-bottom-btn\s*\{[^}]*right:\s*calc\(var\(--sar,\s*env\(safe-area-inset-right,\s*0px\)\) \+ 16px\);/s,
+  );
+  assert.match(app, /function scheduleScrollBtnPosition\(\)/);
+  assert.match(app, /addEventListener\('orientationchange', scheduleScrollBtnPosition\)/);
+  assert.match(app, /setTimeout\(positionScrollBtn, 420\)/);
+  assert.match(main, /UIDeviceOrientationDidChangeNotification/);
+  assert.match(main, /baton_schedule_viewport_refresh/);
+  assert.match(main, /s\.setProperty\('--sal',a\[2\]\+'px'\)/);
+  assert.match(main, /s\.setProperty\('--sar',a\[3\]\+'px'\)/);
+});
+
 test('mobile edge-back owns the left edge and accepts drags within 45 degrees', () => {
   const js = readFileSync(new URL('../../web/js/edge-back.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../../web/css/edge-back.css', import.meta.url), 'utf8');

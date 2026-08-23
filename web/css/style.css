@@ -1181,6 +1181,43 @@ html.native-mobile #top-right.select-actions .text-btn {
   border-radius: 7px; font-size: 14px;
 }
 
+/* Native landscape: use the live iOS left/right safe-area values injected by
+   main.mm. Portrait and all browser layouts retain their existing geometry. */
+@media (orientation: landscape) {
+  html.native-mobile .top-bar,
+  html.native-mobile .breadcrumb {
+    display: none !important;
+  }
+  html.native-mobile #content,
+  html.native-mobile .edge-back-content {
+    padding-top: var(--sat, env(safe-area-inset-top, 0px));
+    padding-left: var(--sal, env(safe-area-inset-left, 0px));
+    padding-right: var(--sar, env(safe-area-inset-right, 0px));
+  }
+  html.native-mobile body:not(.new-session) > #input-bar {
+    padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 12px);
+    padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 12px);
+  }
+  html.native-mobile .agent-threads-box {
+    padding-left: calc(var(--sal, env(safe-area-inset-left, 0px)) + 14px);
+    padding-right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 16px);
+  }
+  html.native-mobile .file-modal-header {
+    min-height: 44px;
+    padding: 0 calc(var(--sar, env(safe-area-inset-right, 0px)) + 8px)
+      0 calc(var(--sal, env(safe-area-inset-left, 0px)) + 12px);
+  }
+  html.native-mobile .file-modal-body {
+    padding-top: var(--sat, env(safe-area-inset-top, 0px));
+    padding-left: var(--sal, env(safe-area-inset-left, 0px));
+    padding-right: var(--sar, env(safe-area-inset-right, 0px));
+    padding-bottom: var(--sab, env(safe-area-inset-bottom, 0px));
+  }
+  html.native-mobile .scroll-bottom-btn {
+    right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 16px);
+  }
+}
+
 @media (max-width: 400px) {
   .meta-sid { display: none; }
 }
