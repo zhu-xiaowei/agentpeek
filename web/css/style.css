@@ -543,7 +543,7 @@ body.browse-view #content { scrollbar-gutter: stable; }
   min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column;
   gap: 4px; margin-top: 10px;
   margin-right: calc(0px - var(--agent-threads-scrollbar-width) - var(--agent-threads-scrollbar-gap));
-  padding-right: var(--agent-threads-scrollbar-gap);
+  padding-right: 2px;
   overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
 }
 .agent-thread-row {
@@ -606,6 +606,11 @@ html.native-mobile .agent-thread-trigger {
   width: 44px; height: 44px; flex-basis: 44px;
 }
 html.native-mobile .agent-thread-dot { right: 6px; bottom: 6px; }
+html.native-mobile .agent-threads-list {
+  margin-right: -8px;
+  padding-right: 8px;
+  scrollbar-gutter: auto;
+}
 @media (max-width: 600px) {
   .agent-threads-overlay {
     align-items: flex-end;
