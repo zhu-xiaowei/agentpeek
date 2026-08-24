@@ -45,42 +45,6 @@ test('compact stream_end stops ordered and gapped turns with REST recovery', asy
   assert.equal(requests, 1);
   assert.equal(h.state.wsRunning, false);
 
-  turnId = 'turn-empty-messages';
-  requests = 0;
-  resetSession(h, { sessionId });
-  h.setApiHandler(async () => {
-    requests++;
-    return {
-      messages: [],
-      hasMore: false,
-      status: 'completed',
-    };
-  });
-  h.hooks.handleWsMessage({
-    action: 'stream_turn_start',
-    sessionId,
-    turnId,
-    seq: 0,
-  });
-  h.hooks.handleWsMessage({
-    action: 'messages',
-    sessionId,
-    turnId,
-    seq: 1,
-    messages: [],
-    truncated: true,
-  });
-  h.hooks.handleWsMessage({
-    action: 'stream_end',
-    sessionId,
-    turnId,
-    seq: 2,
-  });
-
-  assert.equal(h.state.wsRunning, false);
-  await h.tick(250);
-  assert.equal(requests, 1);
-
   turnId = 'turn-gapped-compact-end';
   requests = 0;
   resetSession(h, { sessionId });

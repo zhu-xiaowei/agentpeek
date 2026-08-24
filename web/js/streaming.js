@@ -230,7 +230,6 @@ export class TurnEventQueue {
       turnId: turnId,
       messages: messages,
       end: end,
-      lateJoin: true,
     });
     this.closeTurn(turnId);
     return true;

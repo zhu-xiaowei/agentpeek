@@ -97,6 +97,6 @@ test('end-first late join renders authority once and ignores delayed frames', as
   );
   assert.equal(h.document.body.textContent.includes('partial'), false);
   assert.equal(h.state.wsRunning, false);
-  assert.equal(recoveryRequests, 1);
+  assert.equal(recoveryRequests, 0);
   h.window.close();
 });

@@ -221,7 +221,6 @@ test('a turn that reaches end without seq 0 or 1 completes as late join', () => 
         content: [{ type: 'text', text: 'complete answer' }],
       }],
     },
-    lateJoin: true,
   }]);
   assert.deepEqual(queue.push(event(0, 'stream_turn_start')), []);
 });

@@ -28,7 +28,6 @@ var _wsConfigRequest = null;
 var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _gappedEndTimers = new Map();
-var _turnPayloadRecovery = new Set();
 var _suppressTurnEndRecovery = false;
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
@@ -393,13 +392,6 @@ function finishSessionConnectionRecovery(recovery) {
   } finally {
     _suppressTurnEndRecovery = false;
   }
-  if (hasAuthoritativeCompletion) {
-    for (var bufferedEvent of bufferedEvents) {
-      if (bufferedEvent.turnId) {
-        _turnPayloadRecovery.delete(bufferedEvent.turnId);
-      }
-    }
-  }
   if (recovery.sessionStatus === 'completed') {
     settleRecoveredTurns(recovery.turnIds);
     drainStrictStreamOperations();
@@ -537,12 +529,6 @@ function routeTurnEvent(message) {
     dispatchWsMessage(message);
     return;
   }
-  if (message.action === 'messages'
-    && message.truncated === true
-    && Array.isArray(message.messages)
-    && message.messages.length === 0) {
-    _turnPayloadRecovery.add(message.turnId);
-  }
   if (_connectionRecovery
     && _connectionRecovery.sessionId === message.sessionId) {
     _connectionRecovery.events.push(message);
@@ -624,7 +610,6 @@ function completeGappedTurn(turnId) {
 function handleGappedTurnCompletion(completion) {
   if (!completion || completion.sessionId !== state.wsSessionId) return false;
   clearGappedEndTimer(completion.turnId);
-  _turnPayloadRecovery.delete(completion.turnId);
   // A missing block-start means strict authority cannot be mapped onto the
   // partial coordinator state. Discard that preview, then render the complete
   // terminal authority as one anchored historical turn.
@@ -1075,7 +1060,6 @@ function handleStrictFrame(message, type) {
 
 function handleStrictTurnEnd(message) {
   clearGappedEndTimer(message.turnId);
-  var payloadRecoveryRequired = _turnPayloadRecovery.delete(message.turnId);
   _strictStatusAuthority = true;
   var endMessages = Array.isArray(message.messages)
     ? message.messages.slice()
@@ -1104,7 +1088,7 @@ function handleStrictTurnEnd(message) {
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
-  if (message.recoveryRequired || payloadRecoveryRequired) {
+  if (message.recoveryRequired) {
     scheduleTurnEndRecovery(message.sessionId);
   }
 }
@@ -1134,7 +1118,6 @@ function scheduleTurnEndRecovery(sessionId, attempt) {
 
 function handleLateJoinCompletion(completion) {
   clearGappedEndTimer(completion.turnId);
-  _turnPayloadRecovery.delete(completion.turnId);
   mergeLateJoinAuthority(completion, true);
   settlePendingAtTurnEnd(completion.turnId);
   state.wsRunning = hasOutstandingTurns();
@@ -1146,10 +1129,9 @@ function handleLateJoinCompletion(completion) {
 }
 
 function turnCompletionNeedsRecovery(completion) {
-  return !!completion.gapped
-    || !!completion.lateJoin
-    || !completion.messages?.length
-    || completion.end?.recoveryRequired;
+  return !Array.isArray(completion.end?.messages)
+    || completion.end.messages.length === 0
+    || completion.end.recoveryRequired;
 }
 
 function mergeLateJoinAuthority(completion, completed, forceRender) {
@@ -1308,7 +1290,6 @@ function resetStreamSessionState() {
   _controlEventTimers.clear();
   for (var endTimer of _gappedEndTimers.values()) clearTimeout(endTimer);
   _gappedEndTimers.clear();
-  _turnPayloadRecovery.clear();
   _suppressTurnEndRecovery = false;
   _handledControlEvents.clear();
   _controlRequestState.clear();
