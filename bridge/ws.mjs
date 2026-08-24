@@ -83,6 +83,7 @@ const _commandCatalogCache = new CommandCatalogCache();
 const _clientTurnOrder = new ClientTurnOrder();
 const _clientTurnsInFlight = new Set();
 const _clientTurnAcks = new Map();
+const _turnPayloadRecovery = new Set();
 const CLIENT_TURN_ACK_LIMIT = 5000;
 let _claudeHookServer = null;
 
@@ -399,24 +400,60 @@ export function initWs(config) {
 export function fitWsPayload(data, frameLimit = WS_FRAME_LIMIT) {
   if (Buffer.byteLength(JSON.stringify(data)) <= frameLimit) return data;
   if (data?.action === 'messages') {
-    return {
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    const empty = {
       ...data,
       messages: [],
       truncated: true,
     };
+    const available = frameLimit - Buffer.byteLength(JSON.stringify(empty));
+    if (messages.length && available > 0) {
+      const perMessage = Math.max(
+        256,
+        Math.floor((available - Math.max(0, messages.length - 1)) / messages.length),
+      );
+      const compact = {
+        ...data,
+        messages: messages.map((message) => (
+          truncateToBytes(message, perMessage)
+        )),
+        truncated: true,
+      };
+      if (Buffer.byteLength(JSON.stringify(compact)) <= frameLimit) {
+        return compact;
+      }
+    }
+    return empty;
   }
   if (data?.action === 'stream_end') {
     const { messages: _messages, ...compact } = data;
-    return {
-      ...compact,
-      recoveryRequired: true,
-    };
+    return compact;
   }
   const compact = truncateToBytes(data, frameLimit - 64);
   return {
     ...compact,
     truncated: true,
   };
+}
+
+export function prepareWsPayload(data, recoveryTurns, frameLimit = WS_FRAME_LIMIT) {
+  const recovery = recoveryTurns || new Set();
+  const source = data?.action === 'stream_end'
+    && data.turnId
+    && recovery.has(data.turnId)
+    ? { ...data, recoveryRequired: true }
+    : data;
+  const outgoing = fitWsPayload(source, frameLimit);
+  if (data?.action === 'messages'
+    && data.turnId
+    && Array.isArray(data.messages)
+    && data.messages.length
+    && outgoing?.truncated === true
+    && Array.isArray(outgoing.messages)
+    && outgoing.messages.length === 0) {
+    recovery.add(data.turnId);
+  }
+  return outgoing;
 }
 
 export function wsSend(data) {
@@ -432,7 +469,7 @@ export function wsSend(data) {
   }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return false;
   try {
-    const outgoing = fitWsPayload(data);
+    const outgoing = prepareWsPayload(data, _turnPayloadRecovery);
     assertTurnEventEnvelope(outgoing);
     const payload = JSON.stringify(outgoing);
     if (Buffer.byteLength(payload) > WS_FRAME_LIMIT) {
@@ -440,6 +477,9 @@ export function wsSend(data) {
       return false;
     }
     _ws.send(payload);
+    if (data.action === 'stream_end' && data.turnId) {
+      _turnPayloadRecovery.delete(data.turnId);
+    }
     return true;
   } catch {
     return false;

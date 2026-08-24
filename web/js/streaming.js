@@ -230,6 +230,7 @@ export class TurnEventQueue {
       turnId: turnId,
       messages: messages,
       end: end,
+      lateJoin: true,
     });
     this.closeTurn(turnId);
     return true;
@@ -1259,10 +1260,12 @@ export class StreamingDomRenderer {
     }
   }
 
-  reset() {
+  reset(options = {}) {
     if (this.frameId != null) this.cancelFrame(this.frameId);
     this.frameId = null;
-    for (var turn of this.turnElements.values()) turn.remove();
+    if (options.remove !== false) {
+      for (var turn of this.turnElements.values()) turn.remove();
+    }
     this.turnElements.clear();
     this.blockViews.clear();
   }

@@ -74,14 +74,48 @@ test('foreground recovery settles completed turns from message status', async ()
     send() {},
   };
   h.setApiResponse({
-    messages: [{
-      uuid: 'assistant-final',
-      nativeId: 'codex:item:final',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'finished while hidden' }],
-      timestamp: '2026-08-18T13:58:45.000Z',
-      stopReason: 'end_turn',
-    }],
+    messages: [
+      {
+        uuid: 'user-' + turnId,
+        nativeId: 'codex:user:' + turnId,
+        type: 'user',
+        content: 'continue',
+        timestamp: '2026-08-18T13:58:40.705Z',
+      },
+      {
+        uuid: 'tool-use-' + turnId,
+        nativeId: 'codex:item:' + turnId + ':tool-use',
+        type: 'assistant',
+        content: [{
+          type: 'tool_use',
+          id: 'tool-' + turnId,
+          name: 'WebSearch',
+          input: { query: 'test' },
+        }],
+        timestamp: '2026-08-18T13:58:44.000Z',
+        stopReason: 'tool_use',
+      },
+      {
+        uuid: 'tool-result-' + turnId,
+        nativeId: 'codex:item:' + turnId + ':tool-result',
+        type: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'tool-' + turnId,
+          content: 'done',
+          is_error: false,
+        }],
+        timestamp: '2026-08-18T13:58:45.000Z',
+      },
+      {
+        uuid: 'assistant-final',
+        nativeId: 'codex:item:final',
+        type: 'assistant',
+        content: [{ type: 'text', text: 'finished while hidden' }],
+        timestamp: '2026-08-18T13:58:46.000Z',
+        stopReason: 'end_turn',
+      },
+    ],
     hasMore: false,
     status: 'completed',
   });
@@ -91,11 +125,7 @@ test('foreground recovery settles completed turns from message status', async ()
   await h.tick(40);
 
   assert.equal(h.state.wsRunning, false);
-  assert.equal(
-    h.document.querySelector(`[data-turn-id="${turnId}"]`)
-      ?.classList.contains('stream-committed'),
-    true,
-  );
+  assert.equal(h.document.querySelector('.stream-preview'), null);
   assert.match(h.document.querySelector('.messages').textContent, /finished while hidden/);
 
   const runningTurnId = 'turn-running';

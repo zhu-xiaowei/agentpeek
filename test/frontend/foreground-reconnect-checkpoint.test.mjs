@@ -97,13 +97,22 @@ test('reconnect preserves a partial block until authority replaces it in place',
   );
 
   resolveRest({
-    messages: [{
-      uuid: 'assistant-history-1',
-      nativeId: 'codex:item:assistant-1',
-      type: 'assistant',
-      content: [{ type: 'text', text: 'final first block' }],
-      timestamp: '2026-08-18T13:58:44.000Z',
-    }],
+    messages: [
+      {
+        uuid: 'user-1',
+        nativeId: 'codex:user:' + turnId,
+        type: 'user',
+        content: 'continue',
+        timestamp: '2026-08-18T13:58:40.000Z',
+      },
+      {
+        uuid: 'assistant-history-1',
+        nativeId: 'codex:item:assistant-1',
+        type: 'assistant',
+        content: [{ type: 'text', text: 'final first block' }],
+        timestamp: '2026-08-18T13:58:44.000Z',
+      },
+    ],
     hasMore: false,
     status: 'completed',
   });
@@ -115,15 +124,6 @@ test('reconnect preserves a partial block until authority replaces it in place',
   assert.equal((text.match(/final first block/g) || []).length, 1);
   assert.equal((text.match(/second block/g) || []).length, 1);
   assert.equal(h.state.wsRunning, false);
-  assert.equal(
-    h.document.querySelector(`[data-turn-id="${turnId}"]`)
-      ?.classList.contains('stream-committed'),
-    true,
-  );
-  assert.equal(
-    h.document.querySelector(
-      `[data-turn-id="${turnId}"] [data-block-id="2"]`,
-    ),
-    partialBlock,
-  );
+  assert.equal(h.document.querySelector('.stream-preview'), null);
+  assert.equal(partialBlock.isConnected, false);
 });

@@ -28,6 +28,8 @@ var _wsConfigRequest = null;
 var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _gappedEndTimers = new Map();
+var _turnPayloadRecovery = new Set();
+var _suppressTurnEndRecovery = false;
 var _handledControlEvents = new Set();
 var _controlRequestState = new Map();
 var _preAdoptionTurnEvents = new Map();
@@ -343,8 +345,14 @@ function startSessionConnectionRecovery(recovery) {
     return false;
   }
   recovery.started = true;
-  recoverMissing().then(function (result) {
+  recoverMissing('', {
+    authoritative: true,
+    authoritativeScope: 'all',
+    deferRender: true,
+    requireCompleted: true,
+  }).then(function (result) {
     if (recovery !== _connectionRecovery) return;
+    recovery.authoritativeResult = result?.authoritative ? result : null;
     recovery.sessionStatus = result?.status || '';
     if (recovery.sessionStatus === 'running'
       && hasTerminalAssistantTail(state.wsAllMessages)) {
@@ -376,11 +384,28 @@ function finishSessionConnectionRecovery(recovery) {
   drainStrictStreamOperations();
 
   var bufferedEvents = recovery.events.slice();
+  var hasAuthoritativeCompletion = recovery.sessionStatus === 'completed'
+    && !!recovery.authoritativeResult;
   _connectionRecovery = null;
-  for (var event of bufferedEvents) routeTurnEvent(event);
+  _suppressTurnEndRecovery = hasAuthoritativeCompletion;
+  try {
+    for (var event of bufferedEvents) routeTurnEvent(event);
+  } finally {
+    _suppressTurnEndRecovery = false;
+  }
+  if (hasAuthoritativeCompletion) {
+    for (var bufferedEvent of bufferedEvents) {
+      if (bufferedEvent.turnId) {
+        _turnPayloadRecovery.delete(bufferedEvent.turnId);
+      }
+    }
+  }
   if (recovery.sessionStatus === 'completed') {
     settleRecoveredTurns(recovery.turnIds);
     drainStrictStreamOperations();
+    if (recovery.authoritativeResult) {
+      renderAuthoritativeRecovery(recovery.authoritativeResult);
+    }
   }
   state.wsRunning = recovery.sessionStatus === 'needs_input'
     ? false
@@ -512,6 +537,12 @@ function routeTurnEvent(message) {
     dispatchWsMessage(message);
     return;
   }
+  if (message.action === 'messages'
+    && message.truncated === true
+    && Array.isArray(message.messages)
+    && message.messages.length === 0) {
+    _turnPayloadRecovery.add(message.turnId);
+  }
   if (_connectionRecovery
     && _connectionRecovery.sessionId === message.sessionId) {
     _connectionRecovery.events.push(message);
@@ -593,6 +624,7 @@ function completeGappedTurn(turnId) {
 function handleGappedTurnCompletion(completion) {
   if (!completion || completion.sessionId !== state.wsSessionId) return false;
   clearGappedEndTimer(completion.turnId);
+  _turnPayloadRecovery.delete(completion.turnId);
   // A missing block-start means strict authority cannot be mapped onto the
   // partial coordinator state. Discard that preview, then render the complete
   // terminal authority as one anchored historical turn.
@@ -1043,6 +1075,7 @@ function handleStrictFrame(message, type) {
 
 function handleStrictTurnEnd(message) {
   clearGappedEndTimer(message.turnId);
+  var payloadRecoveryRequired = _turnPayloadRecovery.delete(message.turnId);
   _strictStatusAuthority = true;
   var endMessages = Array.isArray(message.messages)
     ? message.messages.slice()
@@ -1071,15 +1104,21 @@ function handleStrictTurnEnd(message) {
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
-  if (message.recoveryRequired) scheduleTurnEndRecovery(message.sessionId);
+  if (message.recoveryRequired || payloadRecoveryRequired) {
+    scheduleTurnEndRecovery(message.sessionId);
+  }
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
+  if (_suppressTurnEndRecovery) return;
   attempt = attempt || 0;
   var delays = [150, 800, 2000];
   setTimeout(function () {
     if (state.wsSessionId !== sessionId) return;
-    recoverMissing('').then(function (result) {
+    recoverMissing('', {
+      authoritative: true,
+      authoritativeScope: 'last-turn',
+    }).then(function (result) {
       if (state.wsSessionId !== sessionId) return;
       if (attempt + 1 < delays.length
         && (!result || result.status === 'running')) {
@@ -1095,6 +1134,7 @@ function scheduleTurnEndRecovery(sessionId, attempt) {
 
 function handleLateJoinCompletion(completion) {
   clearGappedEndTimer(completion.turnId);
+  _turnPayloadRecovery.delete(completion.turnId);
   mergeLateJoinAuthority(completion, true);
   settlePendingAtTurnEnd(completion.turnId);
   state.wsRunning = hasOutstandingTurns();
@@ -1106,7 +1146,10 @@ function handleLateJoinCompletion(completion) {
 }
 
 function turnCompletionNeedsRecovery(completion) {
-  return !completion.messages?.length || completion.end?.recoveryRequired;
+  return !!completion.gapped
+    || !!completion.lateJoin
+    || !completion.messages?.length
+    || completion.end?.recoveryRequired;
 }
 
 function mergeLateJoinAuthority(completion, completed, forceRender) {
@@ -1265,6 +1308,8 @@ function resetStreamSessionState() {
   _controlEventTimers.clear();
   for (var endTimer of _gappedEndTimers.values()) clearTimeout(endTimer);
   _gappedEndTimers.clear();
+  _turnPayloadRecovery.clear();
+  _suppressTurnEndRecovery = false;
   _handledControlEvents.clear();
   _controlRequestState.clear();
   _preAdoptionTurnEvents.clear();
@@ -1839,11 +1884,341 @@ function trackMessageUuid(message) {
   return true;
 }
 
+function messageIdentity(message) {
+  if (message?.nativeId) return 'native:' + message.nativeId;
+  if (message?.uuid) return 'uuid:' + message.uuid;
+  return '';
+}
+
+function isRecoveryPromptMessage(message) {
+  return message?.type === 'user'
+    && !isInterruptMsg(message)
+    && !isToolResultOnly(message)
+    && !window.isSubagentNotificationMsg?.(message);
+}
+
+function recoveryPrefixIndex(messages, overlapIndex) {
+  if (overlapIndex < 0) return messages.length;
+  for (var index = overlapIndex; index >= 0; index--) {
+    if (isRecoveryPromptMessage(messages[index])) return index;
+  }
+  return overlapIndex;
+}
+
+function replaceAuthoritativeTail(messages, scope) {
+  var authoritative = dedupeCodexUserMessages(messages || []);
+  if (!authoritative.length) {
+    return { added: 0, messages: [], replaced: false };
+  }
+
+  var localMessages = state.wsAllMessages;
+  var prefixIndex = -1;
+  if (scope === 'last-turn') {
+    var restPromptIndex = -1;
+    for (var promptIndex = authoritative.length - 1;
+      promptIndex >= 0;
+      promptIndex--) {
+      if (isRecoveryPromptMessage(authoritative[promptIndex])) {
+        restPromptIndex = promptIndex;
+        break;
+      }
+    }
+    if (restPromptIndex >= 0) {
+      var restPromptKey = messageIdentity(authoritative[restPromptIndex]);
+      for (var localPromptIndex = localMessages.length - 1;
+        localPromptIndex >= 0;
+        localPromptIndex--) {
+        if (restPromptKey
+          && messageIdentity(localMessages[localPromptIndex]) === restPromptKey) {
+          prefixIndex = localPromptIndex;
+          break;
+        }
+      }
+      if (prefixIndex < 0) {
+        for (var fallbackPrompt = localMessages.length - 1;
+          fallbackPrompt >= 0;
+          fallbackPrompt--) {
+          if (isRecoveryPromptMessage(localMessages[fallbackPrompt])) {
+            prefixIndex = fallbackPrompt;
+            break;
+          }
+        }
+      }
+      authoritative = authoritative.slice(restPromptIndex);
+    }
+  }
+
+  var localIndexes = new Map();
+  for (var localIndex = 0; localIndex < localMessages.length; localIndex++) {
+    var localKey = messageIdentity(localMessages[localIndex]);
+    if (localKey && !localIndexes.has(localKey)) {
+      localIndexes.set(localKey, localIndex);
+    }
+  }
+
+  var overlapLocalIndex = -1;
+  for (var restIndex = 0; restIndex < authoritative.length; restIndex++) {
+    var restKey = messageIdentity(authoritative[restIndex]);
+    if (restKey && localIndexes.has(restKey)) {
+      overlapLocalIndex = localIndexes.get(restKey);
+      break;
+    }
+  }
+
+  var authoritativeKeys = new Set(
+    authoritative.map(messageIdentity).filter(Boolean),
+  );
+  // REST returns only the latest page. With no overlap, the local rows are the
+  // only known history prefix, so preserve them and append the authoritative
+  // page rather than dropping older loaded history.
+  if (prefixIndex < 0) {
+    prefixIndex = recoveryPrefixIndex(localMessages, overlapLocalIndex);
+  }
+  var hasKnownBoundary = overlapLocalIndex >= 0
+    || (scope === 'last-turn' && prefixIndex < localMessages.length);
+  var prefix = hasKnownBoundary
+    ? localMessages.slice(0, prefixIndex)
+    : localMessages.slice();
+  prefix = prefix.filter(function (message) {
+    var key = messageIdentity(message);
+    return !key || !authoritativeKeys.has(key);
+  });
+
+  var previousKeys = new Set(
+    localMessages.map(messageIdentity).filter(Boolean),
+  );
+  var added = authoritative.reduce(function (count, message) {
+    var key = messageIdentity(message);
+    return count + (!key || !previousKeys.has(key) ? 1 : 0);
+  }, 0);
+
+  state.wsAllMessages = prefix.concat(authoritative);
+  state.wsMessageUuids = new Set();
+  for (var message of state.wsAllMessages) {
+    if (message.uuid) state.wsMessageUuids.add(message.uuid);
+    if (message.nativeId) state.wsMessageUuids.add('native:' + message.nativeId);
+  }
+  state.wsMessageCount = state.wsAllMessages.length;
+  state.wsLastTimestamp = state.wsAllMessages.length
+    ? state.wsAllMessages[state.wsAllMessages.length - 1].timestamp || ''
+    : '';
+  return {
+    added: added,
+    messages: authoritative,
+    prefixLength: prefix.length,
+    replaced: true,
+  };
+}
+
+function recoveryDomKey(element) {
+  if (!element) return '';
+  var nativeId = element.dataset?.nativeId || '';
+  var messageId = element.dataset?.messageId || '';
+  var toolId = element.dataset?.toolId || '';
+  if (nativeId) return 'native:' + nativeId + (toolId ? ':tool:' + toolId : '');
+  if (messageId) return 'uuid:' + messageId + (toolId ? ':tool:' + toolId : '');
+  if (toolId) return 'tool:' + toolId;
+  if (element.classList?.contains('msg-user')) {
+    return 'user:' + (element.dataset.anchor || element.dataset.ts || '')
+      + ':' + (element.textContent || '').trim();
+  }
+  var firstIdentity = element.querySelector?.(
+    '[data-native-id], [data-message-id], [data-tool-id]',
+  );
+  if (firstIdentity) {
+    return 'group:' + recoveryDomKey(firstIdentity);
+  }
+  return 'fallback:' + (element.className || '')
+    + ':' + (element.dataset?.ts || '')
+    + ':' + (element.textContent || '').trim();
+}
+
+function recoveryComparableMarkup(element) {
+  var clone = element.cloneNode(true);
+  var nodes = [clone].concat(Array.from(clone.querySelectorAll('*')));
+  for (var node of nodes) {
+    node.classList?.remove(
+      'tool-details-collapsed',
+      'expanded-desc',
+      'expanded',
+      'clamped',
+      'open',
+    );
+    node.removeAttribute?.('aria-expanded');
+    node.removeAttribute?.('data-tool-details-group');
+    if (node.classList?.contains('tool-body-content')
+      && String(node.id || '').indexOf('tool-') === 0) {
+      node.removeAttribute('id');
+    }
+  }
+  for (var button of clone.querySelectorAll('.clamp-btn')) button.remove();
+  return clone.outerHTML;
+}
+
+function recoveryNodeUnchanged(current, expected) {
+  if (!current || !expected || current.tagName !== expected.tagName) return false;
+  return recoveryDomKey(current) === recoveryDomKey(expected)
+    && recoveryComparableMarkup(current) === recoveryComparableMarkup(expected);
+}
+
+function inheritRecoveryUiState(current, expected) {
+  if (!current || !expected) return;
+  if (current.classList.contains('tool-node')
+    && expected.classList.contains('tool-node')) {
+    var collapsed = current.classList.contains('tool-details-collapsed');
+    expected.classList.toggle('tool-details-collapsed', collapsed);
+    var header = expected.querySelector(':scope > .tool-header');
+    if (header?.classList.contains('tool-details-toggle')) {
+      header.setAttribute('aria-expanded', String(!collapsed));
+    }
+  }
+}
+
+function reconcileRecoveryChildren(parent, expectedParent) {
+  var existing = Array.from(parent.children);
+  var used = new Set();
+  var byKey = new Map();
+  for (var element of existing) {
+    var key = recoveryDomKey(element);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(element);
+  }
+
+  var cursor = parent.firstElementChild;
+  for (var expected of Array.from(expectedParent.children)) {
+    var expectedKey = recoveryDomKey(expected);
+    var candidates = byKey.get(expectedKey) || [];
+    var current = candidates.find(function (candidate) {
+      return !used.has(candidate);
+    }) || null;
+    var resolved;
+    if (current && recoveryNodeUnchanged(current, expected)) {
+      used.add(current);
+      resolved = current;
+      if (resolved !== cursor) parent.insertBefore(resolved, cursor);
+    } else {
+      inheritRecoveryUiState(current, expected);
+      resolved = expected;
+      parent.insertBefore(resolved, cursor);
+      if (current) {
+        used.add(current);
+        current.remove();
+      }
+    }
+    cursor = resolved.nextElementSibling;
+  }
+
+  for (var stale of existing) {
+    if (!used.has(stale) && stale.isConnected) stale.remove();
+  }
+}
+
+function reconcileAuthoritativeMessages(container, expected, prefixCount) {
+  var existing = Array.from(container.children);
+  var expectedChildren = Array.from(expected.children);
+  var safePrefix = Math.min(prefixCount, existing.length, expectedChildren.length);
+  var existingTail = existing.slice(safePrefix);
+  var used = new Set();
+  var byKey = new Map();
+  for (var element of existingTail) {
+    var key = recoveryDomKey(element);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(element);
+  }
+
+  var cursor = container.children[safePrefix] || null;
+  for (var expectedElement of expectedChildren.slice(safePrefix)) {
+    var expectedKey = recoveryDomKey(expectedElement);
+    var candidates = byKey.get(expectedKey) || [];
+    var current = candidates.find(function (candidate) {
+      return !used.has(candidate);
+    }) || null;
+    if (!current && expectedKey.indexOf('fallback:') === 0
+      && cursor?.classList.contains('assistant-turn')
+      && expectedElement.classList.contains('assistant-turn')
+      && !used.has(cursor)) {
+      current = cursor;
+    }
+
+    var resolved;
+    if (current?.classList.contains('assistant-turn')
+      && expectedElement.classList.contains('assistant-turn')) {
+      used.add(current);
+      reconcileRecoveryChildren(current, expectedElement);
+      resolved = current;
+      if (resolved !== cursor) container.insertBefore(resolved, cursor);
+    } else if (current && recoveryNodeUnchanged(current, expectedElement)) {
+      used.add(current);
+      resolved = current;
+      if (resolved !== cursor) container.insertBefore(resolved, cursor);
+    } else {
+      inheritRecoveryUiState(current, expectedElement);
+      resolved = expectedElement;
+      container.insertBefore(resolved, cursor);
+      if (current) {
+        used.add(current);
+        current.remove();
+      }
+    }
+    cursor = resolved.nextElementSibling;
+  }
+
+  for (var stale of existingTail) {
+    if (!used.has(stale) && stale.isConnected) stale.remove();
+  }
+}
+
+function renderAuthoritativeRecovery(result) {
+  var container = document.querySelector('.messages');
+  if (!container) return false;
+  var content = document.getElementById('content');
+  var previousScrollTop = content?.scrollTop || 0;
+  for (var message of state.wsAllMessages) {
+    message._strictLifecycle = false;
+    message._strictManaged = false;
+  }
+  if (_strictStreamRenderer) {
+    _strictStreamRenderer.reset({ remove: false });
+    _strictStreamRenderer = null;
+  }
+  var expected = document.createElement('div');
+  expected.innerHTML = renderMessages(
+    state.wsAllMessages,
+    state.appState.runtime,
+    { collapseToolDetails: false },
+  );
+  var prefix = document.createElement('div');
+  prefix.innerHTML = renderMessages(
+    state.wsAllMessages.slice(0, result?.prefixLength || 0),
+    state.appState.runtime,
+    { collapseToolDetails: false },
+  );
+  reconcileAuthoritativeMessages(
+    container,
+    expected,
+    prefix.children.length,
+  );
+  state.wsRenderedCount = state.wsAllMessages.length;
+  markTurnAdjacency(container);
+  loadImages(container);
+  clampOverflow(container);
+  if (window.renderMermaidBlocks) renderMermaidBlocks(container);
+  if (window.renderKatexBlocks) renderKatexBlocks(container);
+  if (content) {
+    content.scrollTop = state.stickBottom
+      ? content.scrollHeight
+      : Math.min(previousScrollTop, content.scrollHeight);
+  }
+  updateTitleFromMessages();
+  return true;
+}
+
 /**
  * Buffer WS → fetch DDB → merge + dedup → return merged messages.
  * Used by both initial load (after='') and reconnect recovery (after=wsLastTimestamp).
  */
-async function bufferAndFetch(sessionId, after) {
+async function bufferAndFetch(sessionId, after, options) {
+  options = options || {};
   var lifecycleVersion = _appliedLifecycleVersion;
   state._wsBuffer = [];
   try {
@@ -1856,10 +2231,31 @@ async function bufferAndFetch(sessionId, after) {
     var data = await api('/api/bridge/messages', params);
     // User navigated to another session while this was in flight — drop the stale response.
     if (state.wsSessionId !== sessionId) return { added: 0, needSync: false };
-    var all = dedupeCodexUserMessages(
-      (state._wsBuffer || []).concat(data.messages || []),
-    );
+    var buffered = state._wsBuffer || [];
     state._wsBuffer = null;
+    var useAuthoritative = !!options.authoritative
+      && (!options.requireCompleted || data.status === 'completed');
+    if (useAuthoritative) {
+      var replacement = replaceAuthoritativeTail(
+        data.messages || [],
+        options.authoritativeScope || 'all',
+      );
+      if (!after && data.hasMore !== undefined) {
+        state.wsHasMore = data.hasMore;
+        state.wsOldestTimestamp = data.oldestTimestamp || '';
+      }
+      return {
+        added: replacement.added,
+        messages: replacement.messages,
+        needSync: data.needSync,
+        status: data.status || '',
+        authoritative: replacement.replaced,
+        liveLifecycleChanged: _appliedLifecycleVersion !== lifecycleVersion,
+      };
+    }
+    var all = dedupeCodexUserMessages(
+      buffered.concat(data.messages || []),
+    );
     var added = 0;
     var addedMessages = [];
     for (var i = 0; i < all.length; i++) {
@@ -1949,18 +2345,24 @@ async function loadOlderMessages(sessionId) {
 }
 
 // Reconnect recovery
-async function recoverMissing(after) {
+async function recoverMissing(after, options) {
+  options = options || {};
   if (!state.wsSessionId) return null;
   if (after === undefined) after = state.wsLastTimestamp;
   if (state._wsBuffer !== null) {
     return new Promise(function (resolve) {
       setTimeout(function () {
-        recoverMissing(after).then(resolve);
+        recoverMissing(after, options).then(resolve);
       }, 100);
     });
   }
   try {
-    var result = await bufferAndFetch(state.wsSessionId, after);
+    var result = await bufferAndFetch(state.wsSessionId, after, options);
+    if (result.authoritative) {
+      if (!options.deferRender) renderAuthoritativeRecovery(result);
+      showStats(state.wsMessageCount + ' messages (REST authority)');
+      return result;
+    }
     if (!result.added) return result;
     var container = document.querySelector('.messages');
     if (container) {

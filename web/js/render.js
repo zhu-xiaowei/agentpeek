@@ -195,9 +195,12 @@
   }
 
   // Main: render all messages, merging consecutive assistant messages into one timeline
-  window.renderMessages = function (messages, runtime) {
+  window.renderMessages = function (messages, runtime, options = {}) {
     const resultMap = buildToolMaps(messages);
     const detailPolicy = window.getToolDetailPolicy?.(runtime) || {};
+    const collapseToolDetails = options.collapseToolDetails !== undefined
+      ? !!options.collapseToolDetails
+      : !!detailPolicy.historyCollapsed;
     const html = [];
     let turnItems = []; // accumulate tl-items for current assistant turn
 
@@ -205,7 +208,7 @@
       if (!turnItems.length) return;
       const items = runtime === 'codex' ? normalizeCodexItems(turnItems) : turnItems;
       html.push(`<div class="assistant-turn">${items.map(i =>
-        itemToHtml(i, i.ts, !!detailPolicy.historyCollapsed)).join('')}</div>`);
+        itemToHtml(i, i.ts, collapseToolDetails)).join('')}</div>`);
       turnItems = [];
     }
 
@@ -245,7 +248,7 @@
       if (msg.type === 'assistant') {
         if (msg._strictManaged) continue;
         const items = extractItems(msg, resultMap, runtime, {
-          collapseToolDetails: !!detailPolicy.historyCollapsed,
+          collapseToolDetails,
         });
         turnItems.push(...items.map(i => ({
           ...i,
