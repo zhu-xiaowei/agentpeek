@@ -613,7 +613,7 @@ test('Codex Edit loads and renders the diff only after first expansion', async (
   }
 });
 
-test('offscreen Edit renders without imposing a fixed target height', async () => {
+test('offscreen Edit adopts rendered diff even when layout height is zero', async () => {
   const originalLoader = window.loadDiffViewer;
   const originalDiff = window.Diff;
   const originalUi = window.Diff2HtmlUI;
@@ -627,10 +627,10 @@ test('offscreen Edit renders without imposing a fixed target height', async () =
         this.element.innerHTML = '<div class="d2h-file-wrapper">offscreen diff</div>';
         this.element.getBoundingClientRect = () => ({
           width: 640,
-          height: 184,
+          height: 0,
           top: 0,
           right: 640,
-          bottom: 184,
+          bottom: 0,
           left: 0,
         });
       }
@@ -940,7 +940,7 @@ test('an adopted expanded Edit hydrates without another user toggle', async () =
   }
 });
 
-test('Edit loader failure renders fallback content instead of an empty border', async () => {
+test('Edit loader failure never exposes the raw fallback diff', async () => {
   const originalLoader = window.loadDiffViewer;
   const originalDiff = window.Diff;
   const originalUi = window.Diff2HtmlUI;
@@ -966,9 +966,9 @@ test('Edit loader failure renders fallback content instead of an empty border', 
 
     await window.afterToolDomMutation(node);
     const diff = node.querySelector('.diff-container');
-    assert.equal(diff.dataset.diffState, 'fallback');
-    assert.match(diff.textContent, /old line/);
-    assert.match(diff.textContent, /new line/);
+    assert.equal(diff.dataset.diffState, 'error');
+    assert.equal(diff.textContent, 'Diff unavailable: viewer failed');
+    assert.doesNotMatch(diff.innerHTML, /old line|new line/);
   } finally {
     window.loadDiffViewer = originalLoader;
     window.Diff = originalDiff;

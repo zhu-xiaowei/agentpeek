@@ -392,17 +392,6 @@ body.browse-view #content { scrollbar-gutter: stable; }
 .tool-value.clamp { max-height: 5.2em; overflow: hidden; cursor: pointer; }
 .tool-value.clamp.expanded { max-height: none; }
 
-/* Diff view (fallback) */
-.diff-view { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.6; }
-.diff-line { padding: 0 8px; white-space: pre-wrap; word-break: break-word; }
-.diff-prefix { display: inline-block; width: 16px; color: #6e7681; user-select: none; }
-.diff-add { background: rgba(63, 185, 80, 0.12); color: #e6edf3; }
-.diff-add .diff-prefix { color: #3fb950; }
-.diff-del { background: rgba(248, 81, 73, 0.12); color: #e6edf3; }
-.diff-del .diff-prefix { color: #f85149; }
-.diff-ctx { color: #8b949e; }
-
-
 /* diff2html dark overrides */
 .diff-render-staging {
   position: fixed; left: -100000px; top: 0; z-index: -1;
@@ -1111,7 +1100,6 @@ html.native-mobile .msg-system-event { font-size: 14px; line-height: 21px; }
 html.native-mobile .summary-block > summary { font-size: 14px; line-height: 21px; }
 html.native-mobile .tool-label { font-size: 12px; }
 html.native-mobile .tool-value,
-html.native-mobile .diff-view,
 html.native-mobile .tool-out-pre,
 html.native-mobile .cmd-output pre { font-size: 14px; }
 html.native-mobile .file-badge,

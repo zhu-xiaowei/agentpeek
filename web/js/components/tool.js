@@ -314,14 +314,8 @@ import { state } from '../state.js';
     return `diff-${(first >>> 0).toString(36)}-${(second >>> 0).toString(36)}-${source.length.toString(36)}`;
   }
 
-  function fallbackDiff(oldStr, newStr) {
-    return '<pre style="color:#e6edf3;padding:8px;font-size:12px">'
-      + (oldStr ? oldStr.split('\n').map((line) =>
-        '<span style="color:#f85149">- ' + esc(line) + '</span>').join('\n') : '')
-      + (oldStr && newStr ? '\n' : '')
-      + (newStr ? newStr.split('\n').map((line) =>
-        '<span style="color:#3fb950">+ ' + esc(line) + '</span>').join('\n') : '')
-      + '</pre>';
+  function normalizedDiffText(value) {
+    return value.endsWith('\n') ? value : value + '\n';
   }
 
   function adoptCurrentDiffInstance(element, host, instance, key) {
@@ -342,7 +336,6 @@ import { state } from '../state.js';
     const existing = diffInstances.get(element);
     if (existing?.promise) return existing.promise;
     if (element.dataset.diffState === 'ready'
-      || element.dataset.diffState === 'fallback'
       || element.dataset.diffState === 'error') {
       return;
     }
@@ -366,8 +359,8 @@ import { state } from '../state.js';
         element = adoptCurrentDiffInstance(element, host, instance, key);
         if (!element) return;
         if (!window.Diff || !window.Diff2HtmlUI) throw new Error('Diff viewer unavailable');
-        const a = spec.oldStr.endsWith('\n') ? spec.oldStr : spec.oldStr + '\n';
-        const b = spec.newStr.endsWith('\n') ? spec.newStr : spec.newStr + '\n';
+        const a = normalizedDiffText(spec.oldStr);
+        const b = normalizedDiffText(spec.newStr);
         const patch = window.Diff.createTwoFilesPatch(
           spec.file, spec.file, a, b, '', '', { context: 3 },
         );
@@ -434,24 +427,20 @@ import { state } from '../state.js';
         }
         element = adoptCurrentDiffInstance(element, host, instance, key);
         if (!element) return;
-        let stagedHeight = Math.ceil(Math.max(
-          staging.getBoundingClientRect().height,
-          staging.scrollHeight || 0,
-        ));
-        if (stagedHeight <= 10
-          && /jsdom/i.test(window.navigator.userAgent)
-          && staging.childElementCount) {
-          stagedHeight = 24;
+        if (!staging.querySelector('.d2h-file-wrapper')) {
+          throw new Error('Diff viewer produced no content');
         }
-        if (stagedHeight <= 10) throw new Error('Diff layout height collapsed');
         element.replaceChildren(...Array.from(staging.childNodes));
         staging.remove();
         element.dataset.diffState = 'ready';
       } catch (e) {
         element = adoptCurrentDiffInstance(element, host, instance, key);
         if (!element) return;
-        element.innerHTML = fallbackDiff(spec.oldStr, spec.newStr);
-        element.dataset.diffState = 'fallback';
+        console.warn('[diff] render failed:', e);
+        const reason = String(e?.message || e || 'Unknown error');
+        element.innerHTML = '<div class="diff-unavailable">Diff unavailable: '
+          + esc(reason) + '</div>';
+        element.dataset.diffState = 'error';
       } finally {
         staging?.remove();
         element = adoptCurrentDiffInstance(element, host, instance, key);
@@ -513,7 +502,8 @@ import { state } from '../state.js';
     const newStr = input.new_string || '';
 
     let diffHtml = '';
-    if (oldStr || newStr) {
+    if ((oldStr || newStr)
+      && normalizedDiffText(oldStr) !== normalizedDiffText(newStr)) {
       const diffKey = registerDiffSpec(file, fullPath, oldStr, newStr);
       diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }

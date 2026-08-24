@@ -775,3 +775,64 @@ test('Codex grouping does not mutate Claude turns', () => {
   assert.ok(document.getElementById('claude-empty'));
   assert.equal(document.querySelector('[data-tool-id="claude-tool"]').className, 'tl-item tool-node');
 });
+
+test('strict no-op Edit input does not render an empty diff body', () => {
+  reset();
+  const turnId = 'turn-noop-edit';
+  const input = {
+    file_path: 'src/noop.js',
+    old_string: 'const value = 1;',
+    new_string: 'const value = 1;\n',
+  };
+  const toolMessage = {
+    uuid: 'noop-edit-message',
+    nativeId: 'codex:item:noop-edit',
+    type: 'assistant',
+    content: [{
+      type: 'tool_use',
+      id: 'noop-edit',
+      name: 'Edit',
+      input,
+    }],
+    timestamp: '2026-08-24T08:30:00.000Z',
+    stopReason: 'tool_use',
+  };
+  const resultMessage = {
+    uuid: 'noop-edit-result',
+    nativeId: 'codex:item:noop-edit:tool-result',
+    type: 'user',
+    content: [{
+      type: 'tool_result',
+      tool_use_id: 'noop-edit',
+      content: 'Applied changes',
+      is_error: false,
+    }],
+    timestamp: '2026-08-24T08:30:00.000Z',
+  };
+  const events = [
+    { action: 'stream_turn_start', seq: 0 },
+    { action: 'stream_block_start', seq: 1, kind: 'tool_use', name: 'Edit' },
+    { action: 'stream_tool_input', seq: 2, chunk: JSON.stringify(input) },
+    { action: 'stream_block_stop', seq: 3 },
+    { action: 'messages', seq: 4, messages: [toolMessage] },
+    { action: 'messages', seq: 5, messages: [resultMessage] },
+    {
+      action: 'stream_end',
+      seq: 6,
+      messages: [toolMessage, resultMessage],
+    },
+  ];
+  for (const index of [0, 1, 2, 3, 5, 4, 6]) {
+    const event = events[index];
+    window.__wsTest.handleWsMessage({
+      ...event,
+      sessionId: state.wsSessionId,
+      turnId,
+    });
+  }
+
+  const edit = document.querySelector('[data-tool-id="noop-edit"]');
+  assert.ok(edit);
+  assert.equal(edit.querySelector('.diff-container'), null);
+  assert.equal(edit.querySelector('.tool-body'), null);
+});

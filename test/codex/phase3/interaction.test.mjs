@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
 import test from 'node:test';
 import { CodexInteraction } from '../../../bridge/codex-interaction.mjs';
+import { codexPreviewBlocks } from '../../../bridge/codex-live.mjs';
 import {
   clearLiveMessageRegistry,
   liveMessageRoute,
@@ -199,6 +200,40 @@ function callbacks() {
 function notify(client, method, params) {
   client.emit('notification', { method, params });
 }
+
+test('Codex fileChange previews preserve add, delete, and update semantics', () => {
+  const previews = codexPreviewBlocks({
+    id: 'file-change',
+    type: 'fileChange',
+    changes: [{
+      path: 'added.py',
+      kind: { type: 'add' },
+      diff: ' first line\n second line',
+    }, {
+      path: 'deleted.py',
+      kind: { type: 'delete' },
+      diff: ' first line\n second line',
+    }, {
+      path: 'updated.py',
+      kind: { type: 'update', move_path: null },
+      diff: '-before\n+after',
+    }],
+  });
+
+  assert.deepEqual(previews.map((preview) => preview.input), [{
+    file_path: 'added.py',
+    old_string: '',
+    new_string: 'first line\nsecond line',
+  }, {
+    file_path: 'deleted.py',
+    old_string: 'first line\nsecond line',
+    new_string: '',
+  }, {
+    file_path: 'updated.py',
+    old_string: 'before',
+    new_string: 'after',
+  }]);
+});
 
 test('existing Codex session releases after completion and reuses CC stream frames', async () => {
   clearLiveMessageRegistry();

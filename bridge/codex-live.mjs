@@ -353,6 +353,16 @@ function diffSides(diff) {
   return { old_string: oldLines.join('\n'), new_string: newLines.join('\n') };
 }
 
+function fileChangeSides(change) {
+  const sides = diffSides(change.diff);
+  const kind = typeof change.kind === 'string'
+    ? change.kind
+    : change.kind?.type;
+  if (kind === 'add') return { old_string: '', new_string: sides.new_string };
+  if (kind === 'delete') return { old_string: sides.old_string, new_string: '' };
+  return sides;
+}
+
 export function codexPreviewBlocks(item) {
   if (!item?.id) return [];
   if (item.type === 'agentMessage') {
@@ -377,7 +387,7 @@ export function codexPreviewBlocks(item) {
       name: 'Edit',
       input: {
         file_path: change.path || '',
-        ...diffSides(change.diff),
+        ...fileChangeSides(change),
       },
     }));
   }
