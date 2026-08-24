@@ -73,8 +73,25 @@ test('New Session switches available runtimes and remembers the last per-device 
       codex: { canCreate: true },
     };
 
+    const content = document.getElementById('content');
+    const scrollButton = document.getElementById('scroll-bottom-btn');
+    Object.defineProperties(content, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1200 },
+      scrollTop: { configurable: true, writable: true, value: 200 },
+    });
+    scrollButton.classList.add('visible');
+
     await window.startNewSession('project');
     assert.equal(state.appState.runtime, 'claude');
+    assert.equal(scrollButton.classList.contains('visible'), false);
+
+    // Momentum from the previous session may deliver a late scroll event after
+    // the new-session route is already visible.
+    content.dispatchEvent(new window.Event('scroll'));
+    assert.equal(scrollButton.classList.contains('visible'), false);
+    assert.equal(state.stickBottom, true);
+
     assert.ok(document.querySelector('.runtime-switch'));
     assert.equal(document.querySelector('.runtime-switch img').src.endsWith('/assets/claude-code.svg'), true);
     assert.equal(getComputedStyle(document.querySelector('.runtime-switch')).width, '28px');

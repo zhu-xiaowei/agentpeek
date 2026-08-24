@@ -1481,6 +1481,12 @@ async function startNewSession(projectHash) {
   resetSessionThreads();
   deactivateList();
   document.body.classList.remove('browse-view');
+  // A touch-scroll from the previous session can keep dispatching after the
+  // route changes. Mark the new-session route before the async viewer load so
+  // those stale events cannot re-show the session-only scroll indicator.
+  state.appState.session = '__new__';
+  state.stickBottom = true;
+  document.getElementById('scroll-bottom-btn').classList.remove('visible');
   var myNav = ++_navVersion;
   prepareNavigation({
     device: state.appState.device,
@@ -1500,7 +1506,6 @@ async function startNewSession(projectHash) {
   var runtime = preferredNewSessionRuntime(runtimes, savedRuntime);
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
-  state.appState.session = '__new__';
   state.appState.sessionPreview = 'New Session';
   state.appState.runtime = runtime || 'claude';
   markCurrentRoute(state.appState);
@@ -1716,6 +1721,11 @@ function scheduleScrollBtnPosition() {
     if (!state.appState.session) {
       rememberActiveListScroll();
       maybeLoadNextListPage();
+      return;
+    }
+    if (state.appState.session === '__new__') {
+      btn.classList.remove('visible');
+      state.stickBottom = true;
       return;
     }
     var atBottom = content.scrollHeight - content.scrollTop - content.clientHeight < 100;
