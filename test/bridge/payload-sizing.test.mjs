@@ -46,10 +46,16 @@ test('oversized messages compact tool IN and OUT before generic truncation', () 
   assert.ok(Buffer.byteLength(JSON.stringify(compact)) <= 7000);
   assert.ok(compactInput.startsWith(input.slice(0, 1000)));
   assert.ok(compactInput.endsWith(input.slice(-1000)));
-  assert.match(compactInput, /…\[truncated\]…/);
+  assert.match(
+    compactInput,
+    new RegExp(`\\n\\n…\\[truncated ${input.length - 2000} chars\\]…\\n\\n`),
+  );
   assert.ok(compactOutput.startsWith(output.slice(0, 1500)));
   assert.ok(compactOutput.endsWith(output.slice(-2500)));
-  assert.match(compactOutput, /…\[truncated\]…/);
+  assert.match(
+    compactOutput,
+    new RegExp(`\\n\\n…\\[truncated ${output.length - 4000} chars\\]…\\n\\n`),
+  );
 });
 
 test('oversized messages events keep compact tool IN and OUT on the wire', () => {
@@ -67,8 +73,14 @@ test('oversized messages events keep compact tool IN and OUT on the wire', () =>
   assert.equal(compact.messages.length, 1);
   assert.equal(compact.messages[0].uuid, 'message-1');
   assert.equal(compact.messages[0].nativeId, 'native-1');
-  assert.match(compact.messages[0].content[0].input.command, /…\[truncated\]…/);
-  assert.match(compact.messages[0].content[1].content, /…\[truncated\]…/);
+  assert.match(
+    compact.messages[0].content[0].input.command,
+    /…\[truncated \d+ chars\]…/,
+  );
+  assert.match(
+    compact.messages[0].content[1].content,
+    /…\[truncated \d+ chars\]…/,
+  );
   assert.ok(Buffer.byteLength(JSON.stringify(compact)) <= 7000);
 });
 

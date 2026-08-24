@@ -51,7 +51,6 @@ export function countJsonlLines(filePath) {
 }
 
 const TRUNC_MARK = '\n…[truncated]';
-const MIDDLE_TRUNC_MARK = '\n…[truncated]…\n';
 const TOOL_INPUT_MAX_CHARS = 2000;
 const TOOL_INPUT_HEAD_CHARS = 1000;
 const TOOL_INPUT_TAIL_CHARS = 1000;
@@ -79,8 +78,10 @@ function collectStrings(node, out) {
 
 function truncateMiddle(text, maxChars, headChars, tailChars) {
   if (typeof text !== 'string' || text.length <= maxChars) return text;
+  const truncatedChars = text.length - headChars - tailChars;
+  const marker = `\n\n…[truncated ${truncatedChars} chars]…\n\n`;
   return text.slice(0, headChars)
-    + MIDDLE_TRUNC_MARK
+    + marker
     + text.slice(-tailChars);
 }
 
