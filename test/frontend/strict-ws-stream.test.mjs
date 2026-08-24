@@ -173,5 +173,30 @@ test('strict WS integration uses one ordered queue for complete turns', async ()
     container.textContent.split('answer complete').length - 1,
     1,
   );
+
+  resetSession(h, { sessionId });
+  const failedTurnId = 'turn-failed-authority';
+  const failedMessage = {
+    uuid: 'failed-authority',
+    nativeId: 'codex:turn:failed-authority:error',
+    type: 'assistant',
+    content: [{ type: 'text', text: 'Error: validation failed' }],
+    timestamp: '2026-08-24T07:43:17.000Z',
+    stopReason: 'end_turn',
+  };
+  for (const item of [
+    event(failedTurnId, 0, 'stream_turn_start'),
+    event(failedTurnId, 1, 'messages', { messages: [failedMessage] }),
+    event(failedTurnId, 2, 'stream_end', {
+      error: 'failed',
+      messages: [failedMessage],
+    }),
+  ]) {
+    h.hooks.handleWsMessage(item);
+  }
+  assert.equal(
+    h.document.querySelector('.assistant-text')?.textContent,
+    'Error: validation failed',
+  );
   h.window.close();
 });

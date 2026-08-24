@@ -111,5 +111,91 @@ test('send reliability keeps receipt, retry, and failure states distinct', async
     orderedSent[2].turnId,
   );
   await failPendingTurns();
+
+  const sessionId = 'codex:terminal-result-race';
+  resetSession(h, { sessionId });
+  h.state.ws = {
+    readyState: WebSocket.OPEN,
+    send() {},
+  };
+
+  h.window.doSend('hi', 'hi', []);
+  const racedPending = h.state.pendingSentMessages[0];
+  h.hooks.handleWsMessage({
+    action: 'stream_end',
+    sessionId,
+    turnId: racedPending.id,
+    seq: 1,
+    error: 'unavailable',
+  });
+  h.hooks.handleWsMessage({
+    action: 'stream_turn_start',
+    sessionId,
+    turnId: racedPending.id,
+    seq: 0,
+  });
+
+  assert.equal(h.state.pendingSentMessages.length, 1);
+  assert.equal(racedPending.turnEnded, true);
+  assert.equal(
+    h.document.querySelector('.sending-status').textContent,
+    'sending...',
+  );
+
+  const detail = 'Codex app-server exited (1): launch failed';
+  h.hooks.handleWsMessage({
+    action: 'send_message_result',
+    sessionId,
+    turnId: racedPending.id,
+    ok: false,
+    error: detail,
+  });
+
+  assert.equal(racedPending.failed, true);
+  assert.equal(
+    h.document.querySelector('.sending-status').textContent.includes(detail),
+    true,
+  );
+  assert.match(
+    h.document.querySelector('.sending-status').textContent,
+    /Retry/,
+  );
+
+  resetSession(h, { sessionId });
+  h.state.ws = {
+    readyState: WebSocket.OPEN,
+    send() {},
+  };
+  h.window.doSend('accepted', 'accepted', []);
+  const acceptedPending = h.state.pendingSentMessages[0];
+  h.hooks.handleWsMessage({
+    action: 'stream_turn_start',
+    sessionId: h.state.wsSessionId,
+    turnId: acceptedPending.id,
+    seq: 0,
+  });
+  h.hooks.handleWsMessage({
+    action: 'stream_end',
+    sessionId: h.state.wsSessionId,
+    turnId: acceptedPending.id,
+    seq: 1,
+    error: 'runtime_error',
+  });
+  h.hooks.handleWsMessage({
+    action: 'send_message_result',
+    sessionId: h.state.wsSessionId,
+    turnId: acceptedPending.id,
+    ok: true,
+  });
+
+  assert.equal(h.state.pendingSentMessages.length, 0);
+  assert.equal(
+    h.document.getElementById(acceptedPending.id).hasAttribute('data-pending'),
+    false,
+  );
+  assert.doesNotMatch(
+    h.document.getElementById(acceptedPending.id).textContent,
+    /Retry/,
+  );
   h.window.close();
 });

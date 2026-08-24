@@ -620,7 +620,7 @@ function handleGappedTurnCompletion(completion) {
   _queuedTurnIds.delete(completion.turnId);
   _checkpointResumedTurns.delete(completion.turnId);
   _reconnectingTurns.delete(completion.turnId);
-  settlePendingAtTurnEnd(completion.turnId);
+  settlePendingAtTurnEnd(completion.turnId, completion.end);
   mergeLateJoinAuthority(completion, true, true);
   _appliedLifecycleVersion++;
   updateSendBtn();
@@ -714,6 +714,9 @@ function dispatchWsMessage(msg) {
             promoteEchoedBubble(pending, { timestamp: new Date().toISOString() });
           } else {
             resolvePending(pending, msg.ok, msg.error);
+            if (msg.ok && pending.turnEnded) {
+              promoteEchoedBubble(pending, {});
+            }
           }
         }
       }
@@ -1078,19 +1081,48 @@ function handleStrictTurnEnd(message) {
       messages: endMessages,
     });
   }
+  renderFailedTurnAuthority(message, endMessages);
   _streamCoordinator.endTurn(message);
   drainStrictStreamOperations();
   _turnEventQueue.closeTurn(message.turnId);
   _queuedTurnIds.delete(message.turnId);
   _checkpointResumedTurns.delete(message.turnId);
   _reconnectingTurns.delete(message.turnId);
-  settlePendingAtTurnEnd(message.turnId);
+  settlePendingAtTurnEnd(message.turnId, message);
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
   if (message.recoveryRequired) {
     scheduleTurnEndRecovery(message.sessionId);
   }
+}
+
+function renderFailedTurnAuthority(end, messages) {
+  if (end.error !== 'failed' || !messages.length) return false;
+  var turn = _streamCoordinator.getTurn(end.turnId);
+  if (!turn?.unassignedAuthorityBlocks.length) return false;
+  var visible = [];
+  for (var source of messages) {
+    if ((source.type !== 'assistant' && source.type !== 'summary')
+      || source.stopReason !== 'end_turn'
+      || !Array.isArray(source.content)
+      || !source.content.some(function (block) {
+        return block.type === 'text' && /^Error:\s*/.test(block.text || '');
+      })) {
+      continue;
+    }
+    var existing = state.wsAllMessages.find(function (candidate) {
+      return (source.nativeId && candidate.nativeId === source.nativeId)
+        || (source.uuid && candidate.uuid === source.uuid);
+    });
+    if (!existing || !existing._strictManaged) continue;
+    existing._strictManaged = false;
+    visible.push(existing);
+  }
+  if (!visible.length) return false;
+  updateLastTurn(visible);
+  _strictStreamRenderer?.attachTurnToAnchor(end.turnId);
+  return true;
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
@@ -1119,7 +1151,7 @@ function scheduleTurnEndRecovery(sessionId, attempt) {
 function handleLateJoinCompletion(completion) {
   clearGappedEndTimer(completion.turnId);
   mergeLateJoinAuthority(completion, true);
-  settlePendingAtTurnEnd(completion.turnId);
+  settlePendingAtTurnEnd(completion.turnId, completion.end);
   state.wsRunning = hasOutstandingTurns();
   _appliedLifecycleVersion++;
   updateSendBtn();
@@ -2885,9 +2917,14 @@ function reconcileEchoedPending() {
   }
 }
 
-function settlePendingAtTurnEnd(turnId) {
+function settlePendingAtTurnEnd(turnId, end) {
   var pending = findPending(turnId);
   if (!pending || pending.failed) return false;
+  pending.turnEnded = true;
+  // A terminal runtime error can arrive before its send_message_result.
+  // Keep the pending record until that ack decides whether the prompt itself
+  // was accepted, so a later failure still has an exact bubble to update.
+  if (end?.error && !pending.delivered) return false;
   promoteEchoedBubble(pending, {});
   return true;
 }

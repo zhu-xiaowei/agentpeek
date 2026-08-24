@@ -54,7 +54,15 @@ export function runExecutable(binary, args, options = {}) {
 }
 
 export function spawnExecutable(binary, args, options = {}, spawnFn = spawn, runtime = {}) {
-  return spawnFn(binary, args, executableOptions(binary, options, runtime));
+  const platform = runtime.platform || process.platform;
+  const spawnOptions = executableOptions(binary, options, runtime);
+  const command = platform === 'win32'
+    && spawnOptions.shell
+    && /\.(?:cmd|bat)$/i.test(binary)
+    && /\s/.test(binary)
+    ? `"${binary}"`
+    : binary;
+  return spawnFn(command, args, spawnOptions);
 }
 
 export function validateProductionDependencies(cwd) {

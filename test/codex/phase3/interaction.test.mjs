@@ -166,13 +166,16 @@ function callbacks() {
   const results = [];
   const controls = [];
   const resolvedControls = [];
+  const accepted = [];
   return {
     frames,
     messages,
     results,
     controls,
     resolvedControls,
+    accepted,
     value: {
+      onAccepted: (streamId) => accepted.push(streamId),
       onBlockStart: (_sid, blockId, kind, name) => {
         frames.push({ t: 'start', blockId, kind, name });
       },
@@ -210,6 +213,7 @@ test('existing Codex session releases after completion and reuses CC stream fram
     text: 'hello',
     callbacks: cb.value,
   });
+  assert.deepEqual(cb.accepted, ['stream-1']);
 
   assert.deepEqual(client.requests.slice(0, 2), [
     {
@@ -230,6 +234,7 @@ test('existing Codex session releases after completion and reuses CC stream fram
     threadId: 'thread-1',
     turn: { id: 'turn-1', status: 'inProgress' },
   });
+  assert.deepEqual(cb.accepted, ['stream-1']);
   notify(client, 'item/started', {
     threadId: 'thread-1',
     turnId: 'turn-1',
@@ -313,6 +318,30 @@ test('existing Codex session releases after completion and reuses CC stream fram
     callbacks: second.value,
   });
   assert.equal(client.requests.filter((request) => request.method === 'thread/resume').length, 2);
+});
+
+test('a failed turn/start never reports the turn as accepted', async () => {
+  const client = new FakeClient();
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === 'turn/start') throw new Error('turn start failed');
+    return request(method, params);
+  };
+  const interaction = new CodexInteraction({ client });
+  const cb = callbacks();
+
+  await assert.rejects(
+    interaction.sendExisting({
+      sessionId: 'codex:thread-start-failure',
+      nativeSessionId: 'thread-start-failure',
+      streamId: 'stream-start-failure',
+      text: 'hello',
+      callbacks: cb.value,
+    }),
+    /turn start failed/,
+  );
+
+  assert.deepEqual(cb.accepted, []);
 });
 
 test('Codex skill mentions are resolved through skills/list and sent as structured input', async () => {
@@ -1697,6 +1726,8 @@ test('burst sends to one Codex thread start one turn and queue the next', async 
 
   assert.deepEqual(await firstSend, { queued: false });
   assert.deepEqual(await secondSend, { queued: true });
+  assert.deepEqual(first.accepted, ['stream-burst-1']);
+  assert.deepEqual(second.accepted, []);
   assert.equal(client.requests.filter((entry) => entry.method === 'thread/resume').length, 1);
   assert.equal(client.requests.filter((entry) => entry.method === 'turn/start').length, 1);
 
@@ -1705,6 +1736,7 @@ test('burst sends to one Codex thread start one turn and queue the next', async 
     turn: { id: 'turn-1', status: 'completed' },
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(second.accepted, ['stream-burst-2']);
   assert.equal(client.requests.filter((entry) => entry.method === 'turn/start').length, 2);
   assert.equal(
     client.requests.filter((entry) => entry.method === 'turn/start')[1]

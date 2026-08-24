@@ -696,6 +696,7 @@ export class CodexInteraction {
         input,
       });
       this.#bindTurnId(turn, result?.turn?.id);
+      this.#acceptTurn(turn);
     } catch (error) {
       session.active = null;
       turn.framer.cancel();
@@ -1438,11 +1439,19 @@ export class CodexInteraction {
   #prepareTurn(session, turn) {
     turn.session = session;
     turn.turnId = null;
+    turn.accepted = false;
     turn.userTurnConfirmed = false;
     turn.nextBlockId = 0;
     turn.items = new Map();
     turn.framer = new StreamFramer((frame) => this.#emitFrame(turn, frame));
     return turn;
+  }
+
+  #acceptTurn(turn) {
+    if (turn.accepted) return false;
+    turn.accepted = true;
+    turn.callbacks.onAccepted?.(turn.streamId);
+    return true;
   }
 
   #failTurn(turn, error) {
@@ -1623,6 +1632,7 @@ export class CodexInteraction {
     if (method === 'turn/started') {
       if (turn) {
         this.#bindTurnId(turn, params.turn?.id, !turn.userTurnConfirmed);
+        this.#acceptTurn(turn);
       }
       return;
     }

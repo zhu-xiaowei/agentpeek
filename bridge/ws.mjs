@@ -997,6 +997,11 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
     return authorityQueue;
   };
   const callbacks = {
+    onAccepted: () => {
+      if (options.syncStatus !== false) {
+        syncInteractionStatus(sessionId, 'running', '', options.runtime);
+      }
+    },
     onDelta: (sid, chunk, blockId) => {
       liveTurn.sendDelta({ chunk, blockId });
     },
@@ -1046,6 +1051,9 @@ function createStreamCallbacks(sessionId, turnId, cwd, ack, options = {}) {
       console.log(`[ws] live interaction error for ${sessionId.slice(0, 8)}: code=${err.code} ${err.detail || ''}`);
       if ((options.runtime || 'claude') !== 'claude') clearPendingControls(sessionId);
       finishTurn({ error: 'unavailable' });
+      if (options.syncStatus !== false) {
+        syncInteractionStatus(sessionId, 'completed', '', options.runtime);
+      }
       ack(false, err.detail || 'Session unavailable (busy elsewhere). Read-only.');
     },
   };
@@ -1077,9 +1085,6 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
     });
   };
   try {
-    if (identity.runtime === 'codex') {
-      syncInteractionStatus(identity.sessionId, 'running', '', 'codex');
-    }
     callbacks = createStreamCallbacks(
       identity.sessionId,
       liveTurnId,
