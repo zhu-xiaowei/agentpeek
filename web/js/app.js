@@ -31,6 +31,8 @@ var _pageWasHidden = document.visibilityState === 'hidden';
 var _foregroundRefresh = null;
 var _agentThreadsCache = new Map();
 var AGENT_THREADS_CACHE_LIMIT = 32;
+var _navPointer = null;
+var _breadcrumbUpdatePending = false;
 
 // Stubs replaced when loadViewerLibs() resolves — needed on the device-list path.
 if (typeof window.disconnectWs !== 'function') window.disconnectWs = function () {};
@@ -57,6 +59,38 @@ function formatSize(bytes) {
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function releaseNavPointer(pointer) {
+  if (!pointer || _navPointer !== pointer) return;
+  _navPointer = null;
+  pointer.waiters.forEach(function (resolve) { resolve(); });
+  if (_breadcrumbUpdatePending) setTimeout(updateBreadcrumb, 0);
+}
+
+document.addEventListener('pointerdown', function (e) {
+  var target = e.target.closest && e.target.closest('.list > .item[data-id], #breadcrumb a');
+  if (!target || e.isPrimary === false || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  _navPointer = { id: e.pointerId, target: target, waiters: _navPointer ? _navPointer.waiters : [] };
+}, true);
+
+document.addEventListener('pointerup', function (e) {
+  if (!_navPointer || e.pointerId !== _navPointer.id) return;
+  var pointer = _navPointer;
+  setTimeout(function () { releaseNavPointer(pointer); }, 500);
+}, true);
+
+document.addEventListener('pointercancel', function (e) {
+  if (_navPointer && e.pointerId === _navPointer.id) releaseNavPointer(_navPointer);
+}, true);
+
+document.addEventListener('click', function (e) {
+  if (_navPointer && _navPointer.target.contains(e.target)) releaseNavPointer(_navPointer);
+}, true);
+
+function waitForListPointer() {
+  if (!_navPointer) return Promise.resolve();
+  return new Promise(function (resolve) { _navPointer.waiters.push(resolve); });
 }
 
 // ---- Batch-delete selection ----
@@ -352,6 +386,11 @@ function displayDeviceName(deviceName) {
 }
 
 function updateBreadcrumb() {
+  if (_navPointer && _navPointer.target.closest('#breadcrumb')) {
+    _breadcrumbUpdatePending = true;
+    return;
+  }
+  _breadcrumbUpdatePending = false;
   var el = document.getElementById('breadcrumb');
   var parts = [];
   if (state.appState.device) {
@@ -960,6 +999,8 @@ async function loadPagedList(options, navVersion) {
     if (!fresh) fresh = await options.fetchPage(null);
     if (isLatestListRequest(options, requestId)) writeListCache(options.key, fresh);
     if (!isCurrentList(options, navVersion, requestId)) return;
+    await waitForListPointer();
+    if (!isCurrentList(options, navVersion, requestId)) return;
 
     var anchor = hadMemory ? captureListAnchor(content) : null;
     var keepScroll = content.scrollTop;
@@ -1000,6 +1041,8 @@ async function loadNextListPage() {
   setListLoading(true);
   try {
     var page = await options.fetchPage(cursor);
+    if (!isCurrentList(options, navVersion, requestId)) return;
+    await waitForListPointer();
     if (!isCurrentList(options, navVersion, requestId)) return;
     var content = document.getElementById('content');
     var keepScroll = content.scrollTop;

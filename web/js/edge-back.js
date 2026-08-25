@@ -400,7 +400,7 @@ export function attachEdgeBackGesture(navigateUp, preparePrevious, options) {
   }, true);
 
   document.addEventListener('click', function (e) {
-    if (performance.now() >= suppressClickUntil) return;
+    if (e.target !== edgeGuard || performance.now() >= suppressClickUntil) return;
     e.preventDefault();
     e.stopPropagation();
   }, true);

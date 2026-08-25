@@ -60,6 +60,17 @@ async function waitFor(predicate) {
   throw new Error('Timed out waiting for list update');
 }
 
+function dispatchPointer(window, target, type, pointerId = 1) {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    pointerId: { value: pointerId },
+    pointerType: { value: 'touch' },
+    isPrimary: { value: true },
+    button: { value: 0 },
+  });
+  target.dispatchEvent(event);
+}
+
 test('session and project lists paginate, cache page one, and restore loaded pages on return', async () => {
   const dom = new JSDOM(
     '<!doctype html><body>'
@@ -104,8 +115,10 @@ test('session and project lists paginate, cache page one, and restore loaded pag
 
   const calls = [];
   const returnRefresh = deferred();
+  const projectReturnRefresh = deferred();
   const staleSessions = deferred();
   var mainFirstPageCalls = 0;
+  var deferNextProjectRefresh = false;
 
   async function api(pathname, params) {
     calls.push({ pathname, params: { ...params } });
@@ -141,6 +154,10 @@ test('session and project lists paginate, cache page one, and restore loaded pag
           hasMore: false,
           nextCursor: null,
         };
+      }
+      if (deferNextProjectRefresh) {
+        deferNextProjectRefresh = false;
+        return projectReturnRefresh.promise;
       }
       return {
         projects: Array.from({ length: LIST_PAGE_SIZE }, function (_, i) {
@@ -263,12 +280,28 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     content.dispatchEvent(new window.Event('scroll'));
     const selected = content.querySelector('[data-id="s25"]');
     window.openSession(selected);
-    window.navigateUp();
+    const projectCrumb = window.document.querySelector('#breadcrumb a:last-of-type');
+    dispatchPointer(window, projectCrumb, 'pointerdown', 5);
+    state.rootSessionPreview = 'Updated while loading';
+    window.updateBreadcrumb();
+    assert.equal(projectCrumb.isConnected, true);
+
+    dispatchPointer(window, projectCrumb, 'pointerup', 5);
+    await new Promise(function (resolve) { setTimeout(resolve, 20); });
+    assert.equal(projectCrumb.isConnected, true);
+    var returningSessions;
+    projectCrumb.addEventListener('click', function () {
+      returningSessions = window.loadSessions('D', 'P', 'Project');
+    });
+    projectCrumb.click();
+    assert.equal(state.appState.session, null);
 
     assert.equal(content.querySelectorAll('.item[data-id]').length, TWO_PAGES);
     assert.equal(content.scrollTop, 3900);
     assert.equal(mainFirstPageCalls, 2);
 
+    const quickSession = content.querySelector('[data-id="s24"]');
+    dispatchPointer(window, quickSession, 'pointerdown', 6);
     returnRefresh.resolve({
       sessions: [session(TWO_PAGES + 1)].concat(
         Array.from({ length: LIST_PAGE_SIZE - 1 }, function (_, i) {
@@ -278,12 +311,19 @@ test('session and project lists paginate, cache page one, and restore loaded pag
       hasMore: true,
       nextCursor: 'new-page-2',
     });
-    await waitFor(function () {
-      return content.querySelector('[data-id="s' + (TWO_PAGES + 1) + '"]');
-    });
+    await new Promise(function (resolve) { setTimeout(resolve, 20); });
+    assert.equal(quickSession.isConnected, true);
 
-    assert.equal(content.querySelectorAll('.item[data-id]').length, TWO_PAGES + 1);
-    assert.equal(content.scrollTop, 0);
+    dispatchPointer(window, quickSession, 'pointerup', 6);
+    await new Promise(function (resolve) { setTimeout(resolve, 20); });
+    assert.equal(quickSession.isConnected, true);
+    quickSession.addEventListener('click', function () {
+      window.openSession(quickSession);
+    });
+    quickSession.click();
+    assert.equal(state.appState.session, 's24');
+    await returningSessions;
+
     assert.equal(calls.filter(function (call) {
       return call.pathname === '/api/bridge/sessions' && call.params.cursor === 'page-2';
     }).length, 1);
@@ -309,6 +349,27 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     assert.equal(content.querySelectorAll('.item[data-id]').length, LIST_PAGE_SIZE);
     assert.equal(content.scrollTop, 0);
     assert.equal(window.__listTest.get('sessions:D:P').items.length, LIST_PAGE_SIZE);
+
+    deferNextProjectRefresh = true;
+    const returningProjects = window.loadProjects('D');
+    const quickProject = content.querySelector('[data-id="p60"]');
+    dispatchPointer(window, quickProject, 'pointerdown', 7);
+    projectReturnRefresh.resolve({
+      projects: [project(LIST_PAGE_SIZE + 11)],
+      hasMore: false,
+    });
+    await new Promise(function (resolve) { setTimeout(resolve, 20); });
+    assert.equal(quickProject.isConnected, true);
+
+    dispatchPointer(window, quickProject, 'pointerup', 7);
+    await new Promise(function (resolve) { setTimeout(resolve, 20); });
+    assert.equal(quickProject.isConnected, true);
+    quickProject.addEventListener('click', function () {
+      window.loadSessions('D', 'p60', 'Project 60');
+    });
+    quickProject.click();
+    assert.equal(state.appState.project.hash, 'p60');
+    await returningProjects;
 
     await window.loadProjects('D');
     assert.equal(content.querySelectorAll('.item[data-id]').length, LIST_PAGE_SIZE + 10);
