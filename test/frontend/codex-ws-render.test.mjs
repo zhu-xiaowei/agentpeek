@@ -130,6 +130,16 @@ test('short output keeps the spinner visible for at least 500ms', async () => {
   assert.equal(spinner?.classList.contains('is-collapsed'), true);
 });
 
+test('leaving the session removes the spinner immediately', () => {
+  reset();
+  state.wsRunning = true;
+  window.updateSpinner();
+  state.appState.session = null;
+  window.updateSpinner();
+
+  assert.equal(document.getElementById('cc-spinner'), null);
+});
+
 function reset() {
   window.dismissPermissionPrompt();
   document.querySelector('.messages').innerHTML = '';
