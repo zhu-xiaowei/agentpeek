@@ -958,6 +958,7 @@ function getStrictStreamRenderer() {
 
 window.rebindStrictStreamDom = function () {
   _strictStreamRenderer?.rebindRenderedHistory();
+  drainStrictStreamOperations();
 };
 
 function renderStrictToolBlock(element, block) {
@@ -1050,6 +1051,7 @@ function queueAgentThreadRefresh(options) {
 }
 
 function drainStrictStreamOperations() {
+  if (state._wsBuffer !== null || document.querySelector('.skeleton-messages')) return;
   var operations = _streamCoordinator.takeOperations();
   if (!operations.length) return;
   var completedTurn = false;

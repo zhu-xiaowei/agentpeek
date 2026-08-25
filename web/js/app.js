@@ -1683,6 +1683,7 @@ async function loadMessages(sessionId, preview, options) {
       } else {
         content.innerHTML = '<div class="messages runtime-' + state.appState.runtime
           + '"><div class="empty">No messages</div></div>';
+        if (window.rebindStrictStreamDom) window.rebindStrictStreamDom();
       }
       showInputBar(true);
       if (typeof revealDeferredPermissionPrompt === 'function') {

@@ -13,11 +13,15 @@ function event(sessionId, turnId, seq, action, extra = {}) {
   return { action, sessionId, turnId, seq, ...extra };
 }
 
-test('strict streaming survives the initial REST render and dedupes authority', async () => {
+test('strict streaming waits behind the skeleton until the initial REST render', async () => {
   const h = await makeHarness();
   const sessionId = 'codex:entry-streaming';
   const turnId = 'turn-entry-streaming';
   resetSession(h, { sessionId });
+  h.state.appState.runtime = 'codex';
+  const entryContainer = h.document.querySelector('.messages');
+  entryContainer.className = 'messages skeleton-messages';
+  entryContainer.innerHTML = '<div class="skeleton-user">loading</div>';
   const request = deferred();
   h.setApiHandler(() => request.promise);
 
@@ -39,6 +43,11 @@ test('strict streaming survives the initial REST render and dedupes authority', 
   ]) {
     h.hooks.handleWsMessage(item);
   }
+  await h.tick(10);
+
+  assert.ok(h.document.querySelector('.skeleton-messages'));
+  assert.ok(h.document.querySelector('.skeleton-user'));
+  assert.equal(h.document.querySelector('.stream-preview'), null);
 
   request.resolve({
     messages: [
@@ -61,9 +70,13 @@ test('strict streaming survives the initial REST render and dedupes authority', 
   });
   await loading;
 
-  const container = h.document.querySelector('.messages');
-  container.innerHTML = h.window.renderMessages(h.state.wsAllMessages, 'codex');
+  h.document.getElementById('content').innerHTML = '<div class="messages runtime-codex">'
+    + h.window.renderMessages(h.state.wsAllMessages, 'codex') + '</div>';
   h.window.rebindStrictStreamDom();
+  const container = h.document.querySelector('.messages');
+
+  assert.equal(h.document.querySelector('.skeleton-messages'), null);
+  assert.ok(container.querySelector('.stream-preview'));
 
   for (const item of [
     event(sessionId, turnId, 4, 'stream_block_stop'),
