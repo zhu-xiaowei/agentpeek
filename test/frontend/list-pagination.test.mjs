@@ -139,3 +139,9 @@ test('home session card headings are constrained to one line', () => {
     assert.match(rule[1], /text-overflow:\s*ellipsis/);
   });
 });
+
+test('home cards and subagent rows mirror desktop hover while pressed', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
+  assert.match(css, /\.active-card:active\s*\{[^}]*transform:\s*translateY\(-1px\);[^}]*box-shadow:/s);
+  assert.match(css, /\.agent-thread-row:active\s*\{[^}]*border-color:\s*#484f58;[^}]*background:\s*#21262d;/s);
+});
