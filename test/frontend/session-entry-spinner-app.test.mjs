@@ -140,6 +140,27 @@ test('session entry replaces the skeleton with a stable message container', asyn
     assert.equal(document.querySelector('.skeleton-messages'), null);
     assert.ok(document.querySelector('.messages:not(.skeleton-messages)'));
     assert.equal(document.querySelector('.messages > .empty').textContent, 'No messages');
+
+    await window.loadMessages('agent-session', 'Agent', {
+      rootSessionId: 'session-2',
+      preserveThreads: true,
+      canSend: false,
+    });
+    const inputBar = document.getElementById('input-bar');
+    const input = document.getElementById('msg-input');
+    assert.equal(inputBar.hasAttribute('inert'), true);
+    assert.equal(inputBar.getAttribute('aria-disabled'), 'true');
+    assert.equal(input.readOnly, true);
+    assert.equal(input.placeholder, 'Subagent is read-only');
+
+    await window.loadMessages('session-2', 'Main', {
+      rootSessionId: 'session-2',
+      preserveThreads: true,
+      canSend: true,
+    });
+    assert.equal(inputBar.hasAttribute('inert'), false);
+    assert.equal(input.readOnly, false);
+    assert.equal(input.placeholder, 'Send a message...');
   } finally {
     await vite.close();
     dom.window.close();

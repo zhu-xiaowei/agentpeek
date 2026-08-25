@@ -738,6 +738,12 @@ html.native-mobile .agent-threads-list {
 #input-bar { background: #0d1117; padding: 8px 12px calc(8px + var(--sab, env(safe-area-inset-bottom, 0px))); flex-shrink: 0; display: flex; flex-direction: column; }
 #input-bar.kb-up { padding-bottom: 8px; }
 @media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
+#input-bar[inert] { cursor: not-allowed; }
+#input-bar[inert] .input-row {
+  opacity: 0.5;
+  border-color: #21262d;
+  background: #0d1117;
+}
 
 /* === New-session centered layout (hero + input above the fold) ===
    Input-bar is moved into #content (DOM move in app.js) so it sits with the

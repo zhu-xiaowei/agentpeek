@@ -668,11 +668,15 @@ function showInputBar(visible) {
 }
 
 function applyThreadInputState() {
+  var bar = document.getElementById('input-bar');
   var input = document.getElementById('msg-input');
-  if (!input) return;
-  input.readOnly = !state.activeThreadCanSend;
-  input.setAttribute('aria-disabled', String(!state.activeThreadCanSend));
-  if (!state.activeThreadCanSend) {
+  if (!bar || !input) return;
+  var blocked = !state.activeThreadCanSend;
+  bar.toggleAttribute('inert', blocked);
+  bar.setAttribute('aria-disabled', String(blocked));
+  input.readOnly = blocked;
+  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  if (blocked) {
     input.value = '';
     input.style.height = 'auto';
   }
