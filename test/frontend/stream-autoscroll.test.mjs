@@ -8,7 +8,7 @@ const h = await makeHarness({
   visualViewport: { height: 844, offsetTop: 0 },
 });
 
-test('keyboard opening follows the physical bottom while closing remains native', async (t) => {
+test('keyboard opening and closing preserve physical bottom follow', async (t) => {
   await h.tick(10);
   resetSession(h, { sessionId: 'codex:keyboard-stability' });
   const content = h.document.getElementById('content');
@@ -22,6 +22,7 @@ test('keyboard opening follows the physical bottom while closing remains native'
   const message = container.firstElementChild;
 
   let clientHeight = 300;
+  let scrollHeight = 900;
   let scrollTop = 600;
   let scrollWrites = 0;
   Object.defineProperty(content, 'clientHeight', {
@@ -30,14 +31,14 @@ test('keyboard opening follows the physical bottom while closing remains native'
   });
   Object.defineProperty(content, 'scrollHeight', {
     configurable: true,
-    value: 900,
+    get: () => scrollHeight,
   });
   Object.defineProperty(content, 'scrollTop', {
     configurable: true,
     get: () => scrollTop,
     set: (value) => {
       scrollWrites += 1;
-      scrollTop = Math.min(value, 900 - clientHeight);
+      scrollTop = Math.min(value, scrollHeight - clientHeight);
     },
   });
   h.state.stickBottom = true;
@@ -58,16 +59,18 @@ test('keyboard opening follows the physical bottom while closing remains native'
   clientHeight = 300;
   scrollTop = 600; // Native layout clamp as the keyboard closes.
   scrollWrites = 0;
+  h.state.wsRunning = true;
   h.visualViewport.height = 844;
   h.visualViewport.offsetTop = 0;
   h.visualViewport.dispatch('resize');
+  scrollHeight = 980; // Streaming output grows while the keyboard is closing.
   await h.tick(20);
 
   assert.equal(h.document.body.style.height, '844px');
   assert.equal(h.document.querySelector('.messages'), container);
   assert.equal(container.firstElementChild, message);
-  assert.equal(content.scrollTop, 600);
-  assert.equal(scrollWrites, 0);
+  assert.equal(content.scrollTop, 680);
+  assert.equal(scrollWrites, 1);
   assert.equal(h.state.stickBottom, true);
 
   scrollTop = 120;
@@ -84,6 +87,27 @@ test('keyboard opening follows the physical bottom while closing remains native'
   assert.equal(h.state.stickBottom, false);
   assert.equal(h.document.querySelector('.messages'), container);
   assert.equal(container.firstElementChild, message);
+
+  clientHeight = 300;
+  h.visualViewport.height = 844;
+  h.visualViewport.offsetTop = 0;
+  h.visualViewport.dispatch('resize');
+  await h.tick(20);
+
+  scrollTop = 120;
+  scrollWrites = 0;
+  h.state.stickBottom = false;
+  h.document.getElementById('msg-input').focus();
+  h.visualViewport.height = 420;
+  h.visualViewport.offsetTop = 40;
+  h.visualViewport.dispatch('resize');
+  clientHeight = 100;
+  await h.tick(20);
+
+  assert.equal(content.scrollTop, 880);
+  assert.equal(scrollWrites, 1);
+  assert.equal(h.state.stickBottom, true);
+  h.document.getElementById('msg-input').blur();
 });
 
 test('sending a user message restores bottom following with a smooth scroll', () => {

@@ -12,6 +12,7 @@ var _lastMobileViewportHeight = window.visualViewport ? window.visualViewport.he
 var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
 var _mobileKeyboardOpen = false;
+var _inputFocusRequestsBottom = false;
 var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
@@ -48,12 +49,29 @@ if (window.visualViewport && _isMobile) {
     var content = document.getElementById('content');
     var wasAtBottom = state.appState.session && state.appState.session !== '__new__' && content
       && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
-    if (viewportShrinking && wasAtBottom) _followKeyboardOpen = true;
-    if (viewportGrowing) _followKeyboardOpen = false;
 
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
     var kbUp = vv.height < _vpBaseHeight * 0.75;
+    var keyboardClosing = _mobileKeyboardOpen && !kbUp;
+    var focusOpenedKeyboard = viewportShrinking && kbUp && _inputFocusRequestsBottom;
+    if (viewportShrinking && (wasAtBottom || focusOpenedKeyboard)) {
+      _followKeyboardOpen = true;
+    }
+    if (focusOpenedKeyboard) {
+      _inputFocusRequestsBottom = false;
+      state.stickBottom = true;
+    }
+    if (viewportGrowing) _followKeyboardOpen = false;
     _mobileKeyboardOpen = kbUp;
+    if (keyboardClosing && state.stickBottom) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          if (!state.stickBottom) return;
+          var currentContent = document.getElementById('content');
+          if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
+        });
+      });
+    }
     var chromeHeight = 0;
     if (_isIOS && kbUp) {
       var topBar = document.querySelector('.top-bar');
@@ -84,6 +102,16 @@ if (window.visualViewport && _isMobile) {
   };
   window.visualViewport.addEventListener('resize', syncMobileViewport);
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
+  var messageInput = document.getElementById('msg-input');
+  if (messageInput) {
+    messageInput.addEventListener('focus', function () {
+      _inputFocusRequestsBottom = !!state.appState.session
+        && state.appState.session !== '__new__';
+    });
+    messageInput.addEventListener('blur', function () {
+      _inputFocusRequestsBottom = false;
+    });
+  }
   syncMobileViewport();
 }
 
