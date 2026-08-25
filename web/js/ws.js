@@ -906,6 +906,11 @@ function getStrictStreamRenderer() {
       if (window.renderKatexBlocks) window.renderKatexBlocks(element);
     },
     renderTool: renderStrictToolBlock,
+    renderThinking: function (element) {
+      if (window.renderThinking) {
+        element.innerHTML = window.renderThinking({ thinking: '' });
+      }
+    },
     onBlockRevealComplete: function (turnId, blockId) {
       _streamCoordinator.completeBlockReveal(turnId, blockId);
       drainStrictStreamOperations();

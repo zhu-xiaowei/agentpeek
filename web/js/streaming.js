@@ -946,6 +946,25 @@ export class StreamingDomRenderer {
     this.renderTool = options.renderTool || function (element, block) {
       element.textContent = block.name || 'Tool';
     };
+    this.renderThinking = options.renderThinking || ((element) => {
+      var block = this.document.createElement('div');
+      block.className = 'thinking-block';
+      var label = this.document.createElement('div');
+      label.className = 'thinking-toggle';
+      label.append('Thinking ');
+      var chevron = this.document.createElement('span');
+      chevron.className = 'thinking-chevron';
+      chevron.innerHTML = '&#8250;';
+      label.appendChild(chevron);
+      var body = this.document.createElement('div');
+      body.className = 'thinking-body';
+      label.addEventListener('click', function () {
+        label.classList.toggle('open');
+        body.style.display = body.style.display === 'block' ? 'none' : 'block';
+      });
+      block.append(label, body);
+      element.appendChild(block);
+    });
     this.onBlockRevealComplete = options.onBlockRevealComplete || function () {};
     this.onMutation = options.onMutation || function () {};
     this.scheduleFrame = options.scheduleFrame
@@ -1191,12 +1210,7 @@ export class StreamingDomRenderer {
       return;
     }
     if (view.block.kind === 'thinking') {
-      var label = this.document.createElement('div');
-      label.className = 'thinking-toggle';
-      label.textContent = 'Thinking';
-      var body = this.document.createElement('div');
-      body.className = 'thinking-body';
-      view.element.append(label, body);
+      this.renderThinking(view.element, view.block);
       return;
     }
     this.renderMarkdown(view.element, '');

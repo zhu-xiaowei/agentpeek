@@ -59,6 +59,38 @@ test('ordered delta operations append each character exactly once', () => {
   assert.deepEqual(h.revealed, [['turn-1', 1]]);
 });
 
+test('live thinking uses the collapsible Thinking component from its first frame', () => {
+  const h = createRenderer();
+  h.renderer.applyOperations([
+    { type: 'createTurn', turnId: 'turn-thinking' },
+    {
+      type: 'createBlock',
+      turnId: 'turn-thinking',
+      blockId: 1,
+      block: { blockId: 1, kind: 'thinking', text: '' },
+    },
+    {
+      type: 'appendText',
+      turnId: 'turn-thinking',
+      blockId: 1,
+      chunk: 'reasoning',
+    },
+  ]);
+  h.flushFrames();
+
+  const block = h.document.querySelector('.thinking-block');
+  const toggle = block.querySelector('.thinking-toggle');
+  const body = block.querySelector('.thinking-body');
+  assert.ok(block);
+  assert.equal(toggle.textContent, 'Thinking ›');
+  assert.ok(toggle.querySelector('.thinking-chevron'));
+  assert.equal(body.textContent, 'reasoning');
+
+  toggle.click();
+  assert.equal(toggle.classList.contains('open'), true);
+  assert.equal(body.style.display, 'block');
+});
+
 test('authority patches the existing block instead of creating a duplicate', () => {
   const h = createRenderer();
   createText(h.renderer);
