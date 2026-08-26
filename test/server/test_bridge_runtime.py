@@ -1005,7 +1005,7 @@ def test_messages_include_strong_session_status(monkeypatch):
     assert result["status"] == "needs_input"
 
 
-def test_windows_installer_runs_without_an_interactive_logon():
+def test_windows_installer_prefers_s4u_with_interactive_fallback():
     script = bridge_read._windows_install_script(
         "https://example.com/bridge.tar.gz",
         "https://example.com/v1",
@@ -1013,13 +1013,24 @@ def test_windows_installer_runs_without_an_interactive_logon():
         "Windows",
     )
     assert "-LogonType S4U" in script
-    assert "-LogonType Interactive" not in script
     assert "$env:Path = (Split-Path $nodePath) + ';' + $env:Path" in script
     assert "ci --omit=dev --include=optional --silent --no-audit --no-fund" in script
     assert "verify-dependencies.mjs" in script
     assert "[version]'20.9.0'" in script
     assert "-LogonType ServiceAccount" in script
-    assert "Baton Bridge failed to stay running" in script
+    assert "Administrator privileges are required" in script
+    assert "Run as administrator" in script
+    assert ".IsInRole" in script
+    assert "-LogonType Interactive" in script
+    assert "foreach ($attempt in 1..10)" in script
+    assert "$runningChecks -ge 4" in script
+    assert "Start-BatonTask" in script
+    assert "did not start with S4U" in script
+    assert "0x00041303" in script
+    assert "Task Scheduler operational event" in script
+    assert "failed to start within 10 seconds" in script
+    assert "Task state: $taskState" in script
+    assert "Start error: $taskError" in script
     assert "AppData\\Local\\Programs\\nodejs\\node.exe" in script
     assert "'C:\\nodejs'" in script
     assert "Node.js 20.9+ was not found or could not run" in script

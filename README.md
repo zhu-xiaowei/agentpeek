@@ -33,6 +33,8 @@ Requires [Node.js](https://nodejs.org/) 20.9+.
 2. Copy the one-line **Install bridge** command from the Setup page
 3. Run it on the machine where Claude Code or Codex is running
 
+On native Windows, run the install command in PowerShell using **Run as administrator**.
+
 ### 3. Download App
 
 | iOS | Android | macOS | Windows |
