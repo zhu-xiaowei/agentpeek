@@ -31,6 +31,14 @@ const nativeMain = readFileSync(
   new URL('../../src-tauri/gen/apple/Sources/baton/main.mm', import.meta.url),
   'utf8',
 );
+const cargoToml = readFileSync(
+  new URL('../../src-tauri/Cargo.toml', import.meta.url),
+  'utf8',
+);
+const tauriConfig = JSON.parse(readFileSync(
+  new URL('../../src-tauri/tauri.conf.json', import.meta.url),
+  'utf8',
+));
 
 test('native startup handoff releases after the animated Web shell is painted', () => {
   assert.match(indexHtml, /new MutationObserver\(check\)/);
@@ -52,6 +60,15 @@ test('native startup handoff releases after the animated Web shell is painted', 
   assert.match(indexHtml, /setTimeout\(function \(\) \{\s*window\.__skelReady = 1;/);
   assert.match(indexHtml, /\}, 120\);/);
   assert.doesNotMatch(indexHtml, /first non-skeleton content/);
+});
+
+test('macOS webview paints the configured dark background before HTML loads', () => {
+  assert.match(
+    cargoToml,
+    /tauri = \{ version = "2\.11\.1", features = \["macos-private-api"\] \}/,
+  );
+  assert.equal(tauriConfig.app.macOSPrivateApi, true);
+  assert.equal(tauriConfig.app.windows[0].backgroundColor, '#161b22');
 });
 
 test('native container keeps the shared skeleton until WKWebView is ready', () => {

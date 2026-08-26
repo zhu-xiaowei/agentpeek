@@ -56,7 +56,7 @@ body {
 .breadcrumb-nav a {
   display: inline-block; cursor: pointer; color: #c9d1d9; background: #161b22; border: 1px solid #30363d;
   padding: 1px 5px; border-radius: 12px; font-size: 11px; white-space: nowrap;
-  max-width: 140px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
   transition: all 0.15s; text-decoration: none;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -1054,7 +1054,7 @@ html.native-mobile .runtime-mark { flex-basis: 18px; }
 
 html.native-mobile .breadcrumb { padding: 7px 12px 7px 8px; font-size: 14px; }
 html.native-mobile .breadcrumb-nav span:not(.breadcrumb-sep):not(.breadcrumb-title):not(.badge),
-html.native-mobile .breadcrumb-nav a { padding: 2px 7px; font-size: 13px; }
+html.native-mobile .breadcrumb-nav a { max-width: 140px; padding: 2px 7px; font-size: 13px; }
 html.native-mobile .breadcrumb-sep,
 html.native-mobile .breadcrumb-title { font-size: 15px; }
 
