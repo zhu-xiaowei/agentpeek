@@ -140,8 +140,10 @@ test('home session card headings are constrained to one line', () => {
   });
 });
 
-test('home cards and subagent rows mirror desktop hover while pressed', () => {
+test('home cards and list-style controls use background feedback while pressed', () => {
   const css = fs.readFileSync(path.join(ROOT, 'web/css/style.css'), 'utf8');
-  assert.match(css, /\.active-card:active\s*\{[^}]*transform:\s*translateY\(-1px\);[^}]*box-shadow:/s);
+  assert.match(css, /\.item:active\s*\{\s*background:\s*#161b22;\s*\}/);
+  assert.match(css, /\.active-card:active\s*\{\s*background:\s*#21262d;\s*\}/);
+  assert.doesNotMatch(css, /\.active-card:active\s*\{[^}]*(?:transform|box-shadow):/s);
   assert.match(css, /\.agent-thread-row:active\s*\{[^}]*border-color:\s*#484f58;[^}]*background:\s*#21262d;/s);
 });

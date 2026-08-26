@@ -519,8 +519,8 @@ function renderAgentThreadsModal() {
     childrenByParent.set(parentId, children);
   });
 
-  function connectorHtml(depth, ancestorOpen, isLast, hasChildren) {
-    if (!depth && !hasChildren) return '';
+  function connectorHtml(depth, ancestorOpen, isLast) {
+    if (!depth) return '';
     var parts = [];
     ancestorOpen.forEach(function (open, index) {
       if (!open) return;
@@ -532,12 +532,11 @@ function renderAgentThreadsModal() {
         + (isLast ? ' last' : '') + '"></i>');
       parts.push('<i class="agent-thread-elbow"></i>');
     }
-    if (hasChildren) parts.push('<i class="agent-thread-child-stem"></i>');
     return '<span class="agent-thread-connectors" aria-hidden="true">'
       + parts.join('') + '</span>';
   }
 
-  function rowHtml(thread, depth, ancestorOpen, isLast, hasChildren) {
+  function rowHtml(thread, depth, ancestorOpen, isLast) {
     var isMain = thread.sessionId === state.rootSessionId;
     var nickname = String(thread.agentName || '').trim();
     var role = String(thread.agentRole || '').trim();
@@ -573,7 +572,7 @@ function renderAgentThreadsModal() {
       + ' type="button" data-session-id="' + esc(thread.sessionId) + '"'
       + ' style="--agent-indent:' + indent + '"'
       + ' onclick="switchAgentThread(this.dataset.sessionId)">'
-      + connectorHtml(indent, ancestorOpen.slice(0, indent - 1), isLast, hasChildren)
+      + connectorHtml(indent, ancestorOpen.slice(0, indent - 1), isLast)
       + '<span class="agent-thread-copy"><span class="agent-thread-title">'
       + '<strong>' + esc(name) + '</strong>'
       + '<span class="badge ' + statusClass(thread.status) + '">'
@@ -589,7 +588,7 @@ function renderAgentThreadsModal() {
     return children.map(function (thread, index) {
       var isLast = index === children.length - 1;
       var grandchildren = childrenByParent.get(thread.sessionId) || [];
-      return rowHtml(thread, depth, ancestorOpen, isLast, grandchildren.length > 0)
+      return rowHtml(thread, depth, ancestorOpen, isLast)
         + childHtml(
           thread.sessionId,
           depth === 0 ? [] : ancestorOpen.concat(!isLast),

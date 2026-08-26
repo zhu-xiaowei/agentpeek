@@ -39,7 +39,7 @@ export function createCodexPermissionController(options) {
       renderMcpPrompt(input.codexMcpElicitation || {});
     } else {
       var summary = buildToolSummary(msg.toolName, input);
-      var promptOptions = buildDecisionOptions(approval, request.approvalType);
+      var promptOptions = buildDecisionOptions(approval, request.approvalType, input);
       renderPrompt({
         title: summary.title,
         description: summary.description,
@@ -265,7 +265,7 @@ export function createCodexPermissionController(options) {
   return { show: show, choose: choose, cancel: cancel, reset: reset };
 }
 
-function decisionOption(decision, index, approval, approvalType) {
+function decisionOption(decision, index, approval, approvalType, input) {
   var act = 'codex:' + index;
   var network = approval.networkApprovalContext;
   var additional = approval.additionalPermissions;
@@ -300,8 +300,12 @@ function decisionOption(decision, index, approval, approvalType) {
   }
   if (decision && decision.acceptWithExecpolicyAmendment) {
     var amendment = decision.acceptWithExecpolicyAmendment.execpolicy_amendment || [];
+    var amendmentText = amendment.join(' ').trim();
+    var commandText = String(input && input.command || '').trim();
     return {
-      label: "Yes, and don't ask again for commands that start with `" + amendment.join(' ') + '`',
+      label: commandMatchesExecpolicyAmendment(commandText, amendment)
+        ? "Yes, and don't ask again for this command"
+        : "Yes, and don't ask again for commands that start with `" + amendmentText + '`',
       act: act,
       key: String(index + 1),
     };
@@ -321,9 +325,86 @@ function decisionOption(decision, index, approval, approvalType) {
   return null;
 }
 
-function buildDecisionOptions(approval, approvalType) {
+function tokenizeDisplayedCommand(value) {
+  var source = String(value || '').trim();
+  if (!source) return [];
+
+  var tokens = [];
+  var token = '';
+  var quote = '';
+  var hasToken = false;
+  for (var i = 0; i < source.length; i++) {
+    var char = source[i];
+    if (quote) {
+      if (char === quote) {
+        quote = '';
+        hasToken = true;
+      } else if (quote === '"' && char === '\\' && i + 1 < source.length) {
+        var quotedNext = source[i + 1];
+        if (quotedNext === '"' || quotedNext === '\\'
+          || quotedNext === '$' || quotedNext === '`' || quotedNext === '\n') {
+          token += quotedNext;
+          hasToken = true;
+          i++;
+        } else {
+          token += char;
+          hasToken = true;
+        }
+      } else {
+        token += char;
+        hasToken = true;
+      }
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      hasToken = true;
+    } else if (char === '\\' && i + 1 < source.length) {
+      var unquotedNext = source[i + 1];
+      if (/\s/.test(unquotedNext) || unquotedNext === '"'
+        || unquotedNext === "'" || unquotedNext === '\\') {
+        token += unquotedNext;
+        hasToken = true;
+        i++;
+      } else {
+        token += char;
+        hasToken = true;
+      }
+    } else if (/\s/.test(char)) {
+      if (hasToken) {
+        tokens.push(token);
+        token = '';
+        hasToken = false;
+      }
+    } else {
+      token += char;
+      hasToken = true;
+    }
+  }
+
+  if (quote) return null;
+  if (hasToken) tokens.push(token);
+  return tokens;
+}
+
+function commandMatchesExecpolicyAmendment(commandText, amendment) {
+  if (!commandText || !Array.isArray(amendment) || !amendment.length) return false;
+
+  var amendmentText = amendment.join(' ').trim();
+  if (commandText.trim() === amendmentText) return true;
+
+  var commandTokens = tokenizeDisplayedCommand(commandText);
+  if (!commandTokens || commandTokens.length !== amendment.length) return false;
+
+  return amendment.every(function (part, index) {
+    var ruleToken = String(part);
+    var displayToken = commandTokens[index];
+    return displayToken === ruleToken
+      || displayToken === ruleToken.replace(/\\/g, '\\\\');
+  });
+}
+
+function buildDecisionOptions(approval, approvalType, input) {
   return (approval.availableDecisions || []).map(function (decision, index) {
-    return decisionOption(decision, index, approval, approvalType);
+    return decisionOption(decision, index, approval, approvalType, input);
   }).filter(Boolean);
 }
 

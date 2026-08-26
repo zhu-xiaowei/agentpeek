@@ -76,7 +76,7 @@ test('Codex command approval renders the native three decisions in order', () =>
   );
 });
 
-test('long Codex approval labels render inside a shrinkable option copy', () => {
+test('Codex command approval does not repeat a full command used as the rule', () => {
   reset();
   const longPrefix = 'curl -I --max-time 5 https://example.com/'
     + 'a'.repeat(180);
@@ -107,8 +107,169 @@ test('long Codex approval labels render inside a shrinkable option copy', () => 
   assert.ok(second.querySelector('.permission-key'));
   assert.ok(second.querySelector('.permission-copy > .permission-label'));
   assert.equal(
-    second.querySelector('.permission-copy').textContent.includes(longPrefix),
-    true,
+    second.querySelector('.permission-label').textContent,
+    "Yes, and don't ask again for this command",
+  );
+  assert.equal(second.querySelector('.permission-copy').textContent.includes(longPrefix), false);
+});
+
+test('Codex command approval ignores Windows display escaping when checking repetition', () => {
+  reset();
+  const powershellScript = "Get-Item -LiteralPath 'C:\\Users\\Administrator\\input.exe'"
+    + ' -ErrorAction Stop | Select-Object FullName,Length';
+  const rule = [
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    '-Command',
+    powershellScript,
+  ];
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: 'codex:thread-1',
+    requestId: 'approval-windows',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: {
+      command: '"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe"'
+        + ' -Command "'
+        + powershellScript.replaceAll('\\', '\\\\')
+        + '"',
+      codexApproval: {
+        availableDecisions: [
+          'accept',
+          {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: rule,
+            },
+          },
+          'cancel',
+        ],
+      },
+    },
+  });
+
+  assert.equal(
+    document.querySelectorAll('.permission-label')[1].textContent,
+    "Yes, and don't ask again for this command",
+  );
+});
+
+test('Codex command approval compares quoted command arguments with structured rule tokens', () => {
+  reset();
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: 'codex:thread-1',
+    requestId: 'approval-quoted',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: {
+      command: 'tool --message "hello world"',
+      codexApproval: {
+        availableDecisions: [
+          'accept',
+          {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: ['tool', '--message', 'hello world'],
+            },
+          },
+          'cancel',
+        ],
+      },
+    },
+  });
+
+  assert.equal(
+    document.querySelectorAll('.permission-label')[1].textContent,
+    "Yes, and don't ask again for this command",
+  );
+});
+
+test('Codex command approval parses escaped quotes and whitespace before comparison', () => {
+  reset();
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: 'codex:thread-1',
+    requestId: 'approval-escaped',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: {
+      command: 'tool --message "say \\"hello\\"" hello\\ world',
+      codexApproval: {
+        availableDecisions: [
+          'accept',
+          {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: ['tool', '--message', 'say "hello"', 'hello world'],
+            },
+          },
+          'cancel',
+        ],
+      },
+    },
+  });
+
+  assert.equal(
+    document.querySelectorAll('.permission-label')[1].textContent,
+    "Yes, and don't ask again for this command",
+  );
+});
+
+test('Codex command approval keeps showing a rule that is only a command prefix', () => {
+  reset();
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: 'codex:thread-1',
+    requestId: 'approval-prefix',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: {
+      command: 'git add README.md',
+      codexApproval: {
+        availableDecisions: [
+          'accept',
+          {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: ['git', 'add'],
+            },
+          },
+          'cancel',
+        ],
+      },
+    },
+  });
+
+  assert.equal(
+    document.querySelectorAll('.permission-label')[1].textContent,
+    "Yes, and don't ask again for commands that start with `git add`",
+  );
+});
+
+test('Codex command approval fails closed when displayed command quoting is incomplete', () => {
+  reset();
+  window.showPermissionPrompt({
+    action: 'permission_request',
+    sessionId: 'codex:thread-1',
+    requestId: 'approval-unclosed-quote',
+    kind: 'tool',
+    toolName: 'Bash',
+    input: {
+      command: 'tool "hello world',
+      codexApproval: {
+        availableDecisions: [
+          'accept',
+          {
+            acceptWithExecpolicyAmendment: {
+              execpolicy_amendment: ['tool', 'hello world'],
+            },
+          },
+          'cancel',
+        ],
+      },
+    },
+  });
+
+  assert.equal(
+    document.querySelectorAll('.permission-label')[1].textContent,
+    "Yes, and don't ask again for commands that start with `tool hello world`",
   );
 });
 

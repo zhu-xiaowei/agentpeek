@@ -222,6 +222,23 @@ test('subagent sheet names the root thread Main Session', () => {
   assert.doesNotMatch(indexHtml, />Main Agent<\/button>/);
 });
 
+test('subagent connector rails meet across row gaps without overlapping stems', () => {
+  assert.doesNotMatch(appSource, /agent-thread-child-stem/);
+  assert.match(
+    styleSource,
+    /\.agent-thread-rail \{ top: -5px; bottom: -1px; \}/,
+  );
+  assert.match(
+    styleSource,
+    /\.agent-thread-elbow \{\s*position: absolute; left: -11px; top: 50%;\s*width: 10px;/,
+  );
+  assert.match(
+    styleSource,
+    /\.agent-thread-rail\.current\.last \{ bottom: calc\(50% - 1px\); \}/,
+  );
+  assert.doesNotMatch(styleSource, /\.agent-thread-child-stem/);
+});
+
 test('mobile agent sheet uses a full-height bottom-sheet transition', () => {
   assert.match(
     styleSource,
