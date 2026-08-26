@@ -402,6 +402,20 @@ function settleRecoveredTurns(turnIds) {
   return settled;
 }
 
+function settleAcknowledgedPendingForCompletedSession(sessionId, turnIds) {
+  var recoverableTurnIds = new Set(turnIds || []);
+  for (var pending of state.pendingSentMessages.slice()) {
+    if (pending.sessionId !== sessionId
+      || pending.failed
+      || !pending.delivered
+      || !recoverableTurnIds.has(pending.id)) {
+      continue;
+    }
+    _queuedTurnIds.delete(pending.id);
+    promoteEchoedBubble(pending, {});
+  }
+}
+
 function finishSessionConnectionRecovery(recovery) {
   if (!recovery || recovery !== _connectionRecovery
     || recovery.sessionId !== state.wsSessionId) {
@@ -413,6 +427,7 @@ function finishSessionConnectionRecovery(recovery) {
   var bufferedEvents = recovery.events.slice();
   var hasAuthoritativeCompletion = recovery.sessionStatus === 'completed'
     && !!recovery.authoritativeResult;
+  var lifecycleVersionBeforeBuffered = _appliedLifecycleVersion;
   _connectionRecovery = null;
   _suppressTurnEndRecovery = hasAuthoritativeCompletion;
   try {
@@ -420,16 +435,35 @@ function finishSessionConnectionRecovery(recovery) {
   } finally {
     _suppressTurnEndRecovery = false;
   }
+  var bufferedLifecycleChanged =
+    _appliedLifecycleVersion !== lifecycleVersionBeforeBuffered;
+  var recoveredTurnIds = new Set(recovery.turnIds);
+  var newLocalTurnIds = new Set(
+    state.pendingSentMessages
+      .filter(function (pending) {
+        return pending.sessionId === recovery.sessionId
+          && !pending.failed
+          && !recoveredTurnIds.has(pending.id);
+      })
+      .map(function (pending) { return pending.id; }),
+  );
   if (recovery.sessionStatus === 'completed') {
     settleRecoveredTurns(recovery.turnIds);
+    settleAcknowledgedPendingForCompletedSession(
+      recovery.sessionId,
+      recovery.turnIds,
+    );
     drainStrictStreamOperations();
     if (recovery.authoritativeResult) {
-      renderAuthoritativeRecovery(recovery.authoritativeResult);
+      renderAuthoritativeRecovery(recovery.authoritativeResult, {
+        preservePendingIds: newLocalTurnIds,
+      });
     }
   }
-  state.wsRunning = recovery.sessionStatus === 'needs_input'
-    ? false
-    : hasOutstandingTurns();
+  state.wsRunning = resolveSessionRunningAfterFetch({
+    status: recovery.sessionStatus,
+    liveLifecycleChanged: bufferedLifecycleChanged || newLocalTurnIds.size > 0,
+  }, state.wsAllMessages, state.appState.runtime);
   updateSendBtn();
   return true;
 }
@@ -2216,11 +2250,34 @@ function reconcileAuthoritativeMessages(container, expected, prefixCount) {
   }
 }
 
-function renderAuthoritativeRecovery(result) {
+function takeLocalPendingRecoveryNodes(container, preservePendingIds) {
+  preservePendingIds = preservePendingIds || new Set();
+  var nodes = [];
+  for (var pending of state.pendingSentMessages) {
+    if (pending.sessionId !== state.wsSessionId
+      || (!pending.failed
+        && pending.delivered
+        && !preservePendingIds.has(pending.id))) {
+      continue;
+    }
+    var node = document.getElementById(pending.id);
+    if (!node || node.parentElement !== container) continue;
+    node.remove();
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+function renderAuthoritativeRecovery(result, options) {
+  options = options || {};
   var container = document.querySelector('.messages');
   if (!container) return false;
   var content = document.getElementById('content');
   var previousScrollTop = content?.scrollTop || 0;
+  var localPendingNodes = takeLocalPendingRecoveryNodes(
+    container,
+    options.preservePendingIds,
+  );
   for (var message of state.wsAllMessages) {
     message._strictLifecycle = false;
     message._strictManaged = false;
@@ -2246,6 +2303,9 @@ function renderAuthoritativeRecovery(result) {
     expected,
     prefix.children.length,
   );
+  for (var pendingNode of localPendingNodes) {
+    container.appendChild(pendingNode);
+  }
   state.wsRenderedCount = state.wsAllMessages.length;
   markTurnAdjacency(container);
   loadImages(container);
@@ -2336,7 +2396,6 @@ function resolveSessionRunningAfterFetch(result, messages, runtime) {
   // A lifecycle event applied while REST was in flight is causally newer than
   // the REST snapshot. Preserve the state established by start/end/permission.
   if (result?.status === 'needs_input') return false;
-  if (hasOutstandingTurns()) return true;
   if (result?.liveLifecycleChanged) return state.wsRunning;
   if (result?.status) {
     if (result.status === 'running' && hasTerminalAssistantTail(messages)) {
@@ -2344,6 +2403,7 @@ function resolveSessionRunningAfterFetch(result, messages, runtime) {
     }
     return result.status === 'running';
   }
+  if (hasOutstandingTurns()) return true;
   return deriveRunning(messages, '', runtime);
 }
 

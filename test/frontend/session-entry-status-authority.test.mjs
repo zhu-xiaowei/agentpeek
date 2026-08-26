@@ -110,7 +110,7 @@ test('session entry chooses the newest status authority', async () => {
       status: 'completed',
       liveLifecycleChanged: false,
     }, [], 'codex'),
-    true,
-    'a completed REST snapshot cannot clear a locally queued turn',
+    false,
+    'completed REST status settles the spinner even with a local queued turn',
   );
 });
